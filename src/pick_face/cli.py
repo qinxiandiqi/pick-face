@@ -463,9 +463,77 @@ def link(
     config_file: Annotated[
         Path, typer.Option("--config", "-c")
     ] = Path("pick-face.toml"),
+    atomic: Annotated[
+        bool, typer.Option(
+            "--atomic/--no-atomic",
+            help="Atomic swap via .staging-<ts> + .prev- (default: on)",
+        ),
+    ] = True,
 ) -> None:
     """Create symlinks/hardlinks/copies for each (cluster, source) pair."""
-    raise NotImplementedError("T-008: symlink/hardlink/junction/copy fallback")
+    import shutil
+    import json
+
+    from pick_face.config import load_config
+    from pick_face.linker import (
+        link_or_copy,
+        staging_rename_atomic,
+        unlink_safely,
+    )
+
+    cfg = load_config(config_file)
+    prefer = cfg.link.prefer
+
+    db_path = out / ".cache" / "index.sqlite"
+    conn = open_db(db_path)
+    try:
+        # Build (cluster_id, source_path, rel_path) join.
+        rows = conn.execute(
+            """SELECT c.id AS cluster_id, c.label AS cluster_label,
+                      s.path AS src_path, s.rel_path
+               FROM face f
+               JOIN cluster c ON f.cluster_id = c.id
+               JOIN source  s ON f.source_id = s.id
+               WHERE s.status = 'active'
+               GROUP BY c.id, s.id"""
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if atomic:
+        staging = out.parent / f".staging-{out.name}-{int(time.time())}"
+        staging.mkdir(parents=True, exist_ok=True)
+        work_out = staging
+    else:
+        work_out = out
+
+    counts = {"symlink": 0, "hardlink": 0, "junction": 0, "copy": 0, "errors": 0}
+    for r in rows:
+        cluster_label = r["cluster_label"]
+        src = Path(r["src_path"])
+        # rel_path inside the cluster dir preserves src layout.
+        dst = work_out / cluster_label / Path(r["rel_path"])
+        try:
+            result = link_or_copy(src, dst, prefer=prefer)
+            counts[result.kind] += 1
+        except OSError as e:
+            counts["errors"] += 1
+            console.print(f"[red]link fail:[/red] {src} → {dst}: {e}")
+            continue
+
+    if atomic:
+        prev, run_id = staging_rename_atomic(staging, out)
+        # In a real T-011 implementation we'd prune .prev- here.
+        # Write a tiny marker for the new prev so `prune` can keep the most recent N.
+        if prev is not None:
+            (prev / ".pick-face.prev-of").write_text(json.dumps({"run_id": run_id}))
+    else:
+        prev, run_id = None, None
+
+    summary = "  ".join(f"{k}={v}" for k, v in counts.items() if v)
+    console.print(f"[bold]link[/bold]  {summary or 'no work'}")
+    if atomic:
+        console.print(f"  staged atomic swap; run_id={run_id}")
 
 
 # ---------------------------------------------------------------------------
