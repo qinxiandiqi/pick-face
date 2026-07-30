@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from typing import Annotated, Optional
 
+import numpy as np
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -22,6 +23,8 @@ from pick_face.errors import (
     CliArgError,
     CommercialLicenseError,
     ConfigError,
+    ModelLoadError,
+    ModelNotFoundError,
     PickFaceError,
 )
 from pick_face.index import open_db
@@ -35,6 +38,9 @@ app = typer.Typer(
     ),
     no_args_is_help=True,
     add_completion=False,
+    # Disable typer's Rich-traced pretty exceptions so PickFaceError subclasses
+    # can propagate to main() with their exit_code intact (docs/03 §9).
+    pretty_exceptions_enable=False,
 )
 
 review_app = typer.Typer(help="Review subcommands: interactive & batch apply.")
@@ -235,7 +241,121 @@ def index(
     ] = None,
 ) -> None:
     """Detect & embed faces for ADD/MOD sources (writes face table)."""
-    raise NotImplementedError("T-005: InsightFace detector/embedder pipeline")
+    from pick_face.config import load_config
+    from pick_face.errors import ImageDecodeError, PipelineFailureError
+    from pick_face.images import decode as decode_image
+    from pick_face.runtime import load_insightface_runner
+
+    cfg = load_config(config_file)
+    if provider is not None:
+        cfg.runtime.provider = provider  # CLI override
+
+    try:
+        runner = load_insightface_runner(cfg)
+    except (CommercialLicenseError, ModelNotFoundError, ModelLoadError):
+        raise  # let _errprint surface it cleanly
+
+    db_path = out / ".cache" / "index.sqlite"
+    conn = open_db(db_path)
+    try:
+        run_id = _record_run_start(conn, "index")
+        try:
+            sources = [
+                dict(r) for r in conn.execute(
+                    "SELECT id, path, status FROM source WHERE status = 'active'"
+                ).fetchall()
+            ]
+            faces_total = 0
+            errors = 0
+            for s in sources:
+                try:
+                    decoded = decode_image(Path(s["path"]))
+                except ImageDecodeError as e:
+                    errors += 1
+                    conn.execute(
+                        "INSERT INTO error_log(run_id, ts, path, stage, kind, message) "
+                        "VALUES (?, ?, ?, 'decode', ?, ?)",
+                        (run_id, time.time(), s["path"], e.__class__.__name__, str(e)),
+                    )
+                    continue
+
+                try:
+                    detections = runner.detect(decoded.bgr)
+                except Exception as e:
+                    errors += 1
+                    conn.execute(
+                        "INSERT INTO error_log(run_id, ts, path, stage, kind, message) "
+                        "VALUES (?, ?, ?, 'detect', ?, ?)",
+                        (run_id, time.time(), s["path"], e.__class__.__name__, str(e)),
+                    )
+                    continue
+
+                for det, emb in detections:
+                    if emb is None:
+                        continue
+                    bx1, by1, bx2, by2 = det.bbox
+                    kx = det.landmarks
+                    conn.execute(
+                        """INSERT INTO face(
+                            source_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2,
+                            det_score, lmk_x0, lmk_y0, lmk_x1, lmk_y1, lmk_x2,
+                            lmk_y2, lmk_x3, lmk_y3, lmk_x4, lmk_y4,
+                            quality, low_quality, embedding, model_version, norm
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            int(s["id"]), bx1, by1, bx2, by2,
+                            det.det_score,
+                            float(kx[0, 0]), float(kx[0, 1]),
+                            float(kx[1, 0]), float(kx[1, 1]),
+                            float(kx[2, 0]), float(kx[2, 1]),
+                            float(kx[3, 0]), float(kx[3, 1]),
+                            float(kx[4, 0]), float(kx[4, 1]),
+                            det.quality, 0,
+                            emb.tobytes(),
+                            runner.model_version,
+                            float(np.linalg.norm(emb)),
+                        ),
+                    )
+                    faces_total += 1
+
+            _record_run_finish(conn, run_id, {
+                "faces_added": faces_total, "errors": errors,
+                "sources_seen": len(sources),
+            })
+            console.print(
+                f"[bold]index[/bold]  sources={len(sources)}  "
+                f"faces={faces_total}  errors={errors}"
+            )
+        except Exception as e:
+            _record_run_finish(conn, run_id, {"error": str(e)}, finished=False)
+            if isinstance(e, PipelineFailureError):
+                raise
+            raise PipelineFailureError(f"index pipeline failed: {e}") from e
+    finally:
+        conn.close()
+
+
+def _record_run_start(conn, mode: str) -> int:
+    cur = conn.execute(
+        "INSERT INTO run(started_at, mode, config_hash, stats_json) VALUES (?, ?, ?, '{}')",
+        (time.time(), mode, "no-hash-yet"),
+    )
+    return int(cur.lastrowid)
+
+
+def _record_run_finish(conn, run_id: int, stats: dict, *, finished: bool = True) -> None:
+    import json
+
+    if finished:
+        conn.execute(
+            "UPDATE run SET finished_at = ?, stats_json = ? WHERE id = ?",
+            (time.time(), json.dumps(stats), run_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE run SET stats_json = ? WHERE id = ?",
+            (json.dumps(stats), run_id),
+        )
 
 
 @app.command()
@@ -388,13 +508,36 @@ def rebuild(
 
 
 def main() -> None:
+    """pick-face entrypoint: own all exit-code translation (docs/03 §9).
+
+    We invoke the typer app with `standalone_mode=False` so any
+    non-ClickException raised by a subcommand (i.e. any of our
+    PickFaceError subclasses) propagates *out* of the typer chain and
+    reaches our except clause here. From there we map PickFaceError →
+    exit_code (per docs/03 §9 + docs/11 §3.6); everything else falls
+    through to Python's default rc=1.
+    """
     try:
-        app()
+        try:
+            app(standalone_mode=False)
+        except typer.Exit as e:
+            # typer.Exit is typer's "I want to leave with this code" signal;
+            # honour it verbatim (used by --version, CliArgError → rc=2, etc.)
+            code = e.exit_code if isinstance(e.exit_code, int) else 1
+            sys.exit(code)
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except SystemExit:
+        raise
     except NotImplementedError as e:
         # During M1 scaffolding, subcommands are placeholders that raise this.
         # Show a clear "todo" hint and exit with code 4 (pipeline-not-ready).
         console.print(f"[yellow]M1 placeholder:[/yellow] {e}")
         sys.exit(4)
+    except PickFaceError as e:
+        # Single point of translation: docs/03 §9 + docs/11 §3.6 extension.
+        _errprint(e)
+        sys.exit(e.exit_code)
 
 
 if __name__ == "__main__":
