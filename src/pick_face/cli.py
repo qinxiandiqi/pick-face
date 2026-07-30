@@ -570,7 +570,19 @@ def report(
     ] = "md",
 ) -> None:
     """Render report.{md,json,html} with top-line Model+License header (T-009)."""
-    raise NotImplementedError("T-009: report.md with Model+License header")
+    import json as _json
+
+    from pick_face.config import load_config
+    from pick_face.reporter import write_report
+
+    cfg = load_config(config_file)
+    db_path = out / ".cache" / "index.sqlite"
+    conn = open_db(db_path)
+    try:
+        target = write_report(conn, out_dir=out, config_dict=_json.loads(_json.dumps(cfg.model_dump(mode="json"))), fmt=fmt)
+    finally:
+        conn.close()
+    console.print(f"[green]wrote[/green] {target}")
 
 
 # ---------------------------------------------------------------------------
