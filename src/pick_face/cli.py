@@ -70,10 +70,16 @@ def _errprint(exc: BaseException) -> None:
 
 
 def _exit(exc: BaseException) -> None:
-    """Print + exit with the error's contract exit code (docs/03 §9)."""
+    """Print + exit with the error's contract exit code (docs/03 §9).
+
+    We raise `SystemExit` rather than `typer.Exit` because `typer.Exit` is
+    caught internally by typer/click even when invoked with
+    `standalone_mode=False`, so it never reaches our outer except in
+    `main()` and the contract exit code would be lost.
+    """
     _errprint(exc)
     code = exc.exit_code if isinstance(exc, PickFaceError) else 1
-    raise typer.Exit(code=code)
+    raise SystemExit(code)
 
 
 def _version_callback(value: bool) -> None:
@@ -128,11 +134,25 @@ def init_models(
             help="Required to actually contact InsightFace model servers.",
         ),
     ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            help="Skip the interactive 'I AGREE' confirmation prompt.",
+        ),
+    ] = False,
     config_file: Annotated[
         Path, typer.Option("--config", "-c", help="Path to pick-face.toml.")
     ] = Path("pick-face.toml"),
 ) -> None:
-    """Download the configured model pack (requires --allow-network + I AGREE)."""
+    """Download the configured model pack (requires --allow-network + I AGREE).
+
+    Per docs/11 §3.3 we always print the License Notice for InsightFace
+    models and (in interactive mode) require the user to type 'I AGREE'.
+    A `.license_ack` JSON file is written next to the weights so the
+    audit trail is preserved (docs/11 §3.4).
+    """
     if not allow_network:
         _exit(
             CliArgError(
@@ -140,11 +160,44 @@ def init_models(
                 "See docs/11 §3.3 for the License Notice."
             )
         )
-    # Full notice printing + .license_ack emission is implemented in T-013 (M1).
-    # Stub: refuse if not implemented yet.
-    raise NotImplementedError(
-        "T-013 init-models License Notice + .license_ack is M1 follow-up. "
-        "See docs/11-commercial-compliance.md §3.3 for the full text to print."
+
+    from pick_face.config import load_config
+    from pick_face.models import (
+        is_insightface_model,
+        license_notice_for,
+        write_license_ack,
+    )
+
+    if config_file.exists():
+        cfg = load_config(config_file)
+    else:
+        from pick_face.config import PickFaceConfig
+        cfg = PickFaceConfig()
+        console.print(
+            f"[yellow]No config at {config_file}; using defaults "
+            f"(model_name={cfg.runtime.model_name!r}).[/yellow]"
+        )
+
+    notice = license_notice_for(cfg.runtime.model_name)
+    console.print(notice)
+
+    if is_insightface_model(cfg.runtime.model_name) and not yes:
+        try:
+            reply = input("Type 'I AGREE' to continue (or 'NO' to abort): ").strip()
+        except EOFError:
+            reply = ""
+        if reply != "I AGREE":
+            _exit(CliArgError("Aborted by user (no 'I AGREE' typed)."))
+
+    # Persist the audit trail. The actual download is delegated to the
+    # InsightFace model_zoo when available; we only write the .license_ack.
+    target_dir = cfg.runtime.model_dir / cfg.runtime.model_name
+    ack_path = write_license_ack(target_dir, cfg.runtime.model_name)
+    console.print(f"[green]wrote[/green] {ack_path}")
+    console.print(
+        "[dim]Tip: hand the .license_ack to your auditor. The actual weight "
+        "download is left to the bundled `insightface.model_zoo` so pick-face "
+        "does not pin a downloader in M1.[/dim]"
     )
 
 

@@ -178,6 +178,39 @@ def test_warnings_for_acknowledged_compliance(populated_db) -> None:
     assert not any("non-commercial-research" in m for m in msgs)
 
 
+def test_render_markdown_includes_accepted_by_when_ack_present(populated_db, tmp_pure: Path) -> None:
+    from pick_face.models import write_license_ack
+
+    model_dir = tmp_pure / "models" / "buffalo_l"
+    write_license_ack(model_dir, "buffalo_l", acked_by="alice")
+    cfg = PickFaceConfig(
+        runtime={
+            "model_name": "buffalo_l",
+            "accept_noncommercial_model_license": True,
+            "model_dir": tmp_pure / "models",
+        }
+    )
+    body = render_markdown(
+        collect_stats(populated_db),
+        config_dict=_config_dict(cfg),
+        ack_summary=f'user "alice" on 2026-07-30 (see `.cache/buffalo_l/.license_ack`)',
+    )
+    assert "**Accepted by**" in body
+    assert "alice" in body
+
+
+def test_render_json_includes_accepted_by(populated_db) -> None:
+    cfg = PickFaceConfig()
+    s = collect_stats(populated_db)
+    j = render_json(
+        s,
+        config_dict=_config_dict(cfg),
+        ack_summary='user "bob" on 2026-07-30',
+    )
+    parsed = json.loads(j)
+    assert parsed["model"]["accepted_by"] == 'user "bob" on 2026-07-30'
+
+
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------

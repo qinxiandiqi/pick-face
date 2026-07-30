@@ -79,6 +79,7 @@ def render_markdown(
     run_id: str | None = None,
     warnings: tuple[str, ...] = (),
     person_legend: tuple[tuple[int, str, int], ...] = (),
+    ack_summary: str | None = None,
 ) -> str:
     """Render the report.md body. The header is the docs/11 §3.4 audit row."""
     rid = run_id or datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -104,23 +105,25 @@ def render_markdown(
         f"- **Model dir**: `{model_dir}`",
         f"- **Model License**: {license_label}",
         f"- **License Accepted**: {'yes' if accepted else 'no (commercial users must self-train, see docs/11)'}",
-        f"- **Provider**: `{provider}`",
-        "",
-        "## Stats",
-        "",
-        f"- **Total sources**: {stats.total_sources}",
-        f"- **Active sources**: {stats.active_sources}",
-        f"- **Missing sources**: {stats.missing_sources}",
-        f"- **Total faces**: {stats.total_faces}",
-        f"- **Low-quality faces**: {stats.low_quality_faces}",
-        f"- **Noise faces (cluster_id IS NULL)**: {stats.noise_faces}",
-        f"- **Persons**: {stats.persons}",
-        f"- **Cluster ID range**: {stats.cluster_id_min}..{stats.cluster_id_max}",
-        f"- **Avg face-to-centroid similarity**: {stats.avg_face_to_cluster:.3f}",
-        "",
-        "## Persons",
-        "",
     ]
+    if ack_summary:
+        lines.append(f"- **Accepted by**: {ack_summary}")
+    lines.append(f"- **Provider**: `{provider}`")
+    lines.append("")
+    lines.append("## Stats")
+    lines.append("")
+    lines.append(f"- **Total sources**: {stats.total_sources}")
+    lines.append(f"- **Active sources**: {stats.active_sources}")
+    lines.append(f"- **Missing sources**: {stats.missing_sources}")
+    lines.append(f"- **Total faces**: {stats.total_faces}")
+    lines.append(f"- **Low-quality faces**: {stats.low_quality_faces}")
+    lines.append(f"- **Noise faces (cluster_id IS NULL)**: {stats.noise_faces}")
+    lines.append(f"- **Persons**: {stats.persons}")
+    lines.append(f"- **Cluster ID range**: {stats.cluster_id_min}..{stats.cluster_id_max}")
+    lines.append(f"- **Avg face-to-centroid similarity**: {stats.avg_face_to_cluster:.3f}")
+    lines.append("")
+    lines.append("## Persons")
+    lines.append("")
     if person_legend:
         lines.append("| ID | Label | Faces |")
         lines.append("|---:|:---|---:|")
@@ -150,9 +153,10 @@ def render_markdown(
     elif model_name in INSIGHTFACE_MODELS:
         lines.append(
             f"> Model `{model_name}` is under the InsightFace non-commercial-research "
-            "license; `accept_noncommercial_model_license = true` was set in this run. "
-            "Audit trail: see `.cache/.license_ack` (added in T-013, M1 follow-up)."
+            "license; `accept_noncommercial_model_license = true` was set in this run."
         )
+        if ack_summary:
+            lines.append(f"> Audit trail: {ack_summary}.")
     else:
         lines.append(
             f"> Model `{model_name}` is custom (no commercial restriction enforced by pick-face)."
@@ -168,6 +172,7 @@ def render_json(
     run_id: str | None = None,
     warnings: tuple[str, ...] = (),
     person_legend: tuple[tuple[int, str, int], ...] = (),
+    ack_summary: str | None = None,
 ) -> str:
     """Same content as markdown, but machine-readable for CI."""
     rid = run_id or datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -185,6 +190,7 @@ def render_json(
             "license_accepted": bool(
                 config_dict.get("runtime", {}).get("accept_noncommercial_model_license", False)
             ),
+            "accepted_by": ack_summary,
             "provider": config_dict.get("runtime", {}).get("provider"),
         },
         "stats": stats.__dict__,
@@ -220,17 +226,20 @@ def write_report(
 
     runtime_cfg = config_dict.get("runtime", {})
     warnings = _warnings_for(runtime_cfg, stats)
+    ack_summary = _license_ack_line(config_dict)
 
     if fmt == "md":
         body = render_markdown(
             stats, config_dict=config_dict, run_id=run_id,
             warnings=warnings, person_legend=person_legend,
+            ack_summary=ack_summary,
         )
         target = out_dir / "report.md"
     elif fmt == "json":
         body = render_json(
             stats, config_dict=config_dict, run_id=run_id,
             warnings=warnings, person_legend=person_legend,
+            ack_summary=ack_summary,
         )
         target = out_dir / "report.json"
     else:
@@ -238,6 +247,24 @@ def write_report(
 
     target.write_text(body, encoding="utf-8")
     return target
+
+
+def _license_ack_line(config_dict: dict) -> str | None:
+    """Build the 'Accepted by …' line for report.md/json (docs/11 §3.4).
+
+    We re-derive the model_dir/model_name from the JSON config and try to
+    read `.license_ack` next to it. We do this here (rather than via
+    `models.license_ack_summary`) so the reporter stays decoupled from
+    the runtime models module.
+    """
+    try:
+        from pick_face.models import license_ack_summary
+        from pick_face.config import PickFaceConfig
+
+        cfg = PickFaceConfig.model_validate(config_dict)
+        return license_ack_summary(cfg)
+    except Exception:
+        return None
 
 
 def _warnings_for(runtime_cfg: dict, stats: ReportStats) -> tuple[str, ...]:
