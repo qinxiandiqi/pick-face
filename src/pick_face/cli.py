@@ -369,7 +369,92 @@ def cluster(
     ] = False,
 ) -> None:
     """HDBSCAN + 2-pass centroid merge (docs/04 §2.4)."""
-    raise NotImplementedError("T-007: HDBSCAN + centroid merge + constraints")
+    from pick_face.cluster import (
+        Constraint as _Constraint,  # noqa: F401  (placeholder for review consts)
+        cluster_embeddings,
+    )
+    from pick_face.config import load_config
+
+    cfg = load_config(config_file)
+    db_path = out / ".cache" / "index.sqlite"
+    conn = open_db(db_path)
+    try:
+        faces = [
+            dict(r) for r in conn.execute(
+                "SELECT id, embedding, low_quality FROM face"
+            ).fetchall()
+        ]
+        if not faces:
+            console.print("[yellow]No faces in DB yet. Run `pick-face index` first.[/yellow]")
+            return
+
+        import numpy as np
+        face_ids = [f["id"] for f in faces]
+        embeddings = np.stack([
+            np.frombuffer(f["embedding"], dtype=np.float32).copy() for f in faces
+        ])
+        low_quality = np.array([bool(f["low_quality"]) for f in faces], dtype=bool)
+
+        constraints: tuple = ()  # review constraints wired in T-104 (M2)
+
+        result = cluster_embeddings(
+            embeddings,
+            cfg=cfg.clustering,
+            low_quality_mask=low_quality,
+            constraints=constraints,
+        )
+
+        # Write face.cluster_id back.
+        # If rebuild, drop existing cluster rows (and their images); reuse IDs
+        # where possible to keep person-XXXX paths stable (docs/04 §2.4).
+        if rebuild:
+            conn.execute("UPDATE cluster SET merged_into = NULL")
+            conn.execute("DELETE FROM cluster")
+            conn.execute("DELETE FROM link")
+            conn.execute("UPDATE face SET cluster_id = NULL")
+
+        # Reconcile existing cluster rows / ids with the new labels.
+        existing = [
+            row["id"] for row in conn.execute(
+                "SELECT id FROM cluster ORDER BY id"
+            ).fetchall()
+        ]
+        max_existing = max(existing) if existing else 0
+        with conn:
+            for new_lbl in range(result.n_clusters):
+                cid = (new_lbl + 1) if not existing else (existing[new_lbl] if new_lbl < len(existing) else (max_existing + (new_lbl - len(existing)) + 1))
+                cnt = int((result.labels == new_lbl).sum())
+                conn.execute(
+                    """INSERT INTO cluster(id, label, size, mean_sim, created_at, updated_at)
+                       VALUES (?, ?, ?, NULL, ?, ?)
+                       ON CONFLICT(id) DO UPDATE SET
+                           size = excluded.size,
+                           updated_at = excluded.updated_at""",
+                    (int(cid), f"person-{int(cid):04d}", cnt, time.time(), time.time()),
+                )
+            for i, fid in enumerate(face_ids):
+                if result.labels[i] == -1:
+                    conn.execute(
+                        "UPDATE face SET cluster_id = NULL WHERE id = ?",
+                        (int(fid),),
+                    )
+                else:
+                    cid = (result.labels[i] + 1) if not existing else (
+                        existing[result.labels[i]] if result.labels[i] < len(existing) else (
+                            max_existing + (result.labels[i] - len(existing)) + 1
+                        )
+                    )
+                    conn.execute(
+                        "UPDATE face SET cluster_id = ? WHERE id = ?",
+                        (int(cid), int(fid)),
+                    )
+
+        console.print(
+            f"[bold]cluster[/bold]  clusters={result.n_clusters}  noise={result.n_noise}  "
+            f"faces={len(face_ids)}"
+        )
+    finally:
+        conn.close()
 
 
 @app.command()
