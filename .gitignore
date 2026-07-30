@@ -1,0 +1,293 @@
+# pick-face .gitignore
+# ----------------------------------------------------------------
+# 原则: 仓里只放源码 + 文档 + 测试 fixture 的"骨架"。
+#       任何"产物"都不入仓（模型、wheel、构建缓存、运行期数据、虚拟环境）。
+# 关联: docs/11-commercial-compliance.md §3.1 商业合规护栏
+#       docs/01 AC-9 商业合规护栏
+#       docs/03 §4.1 仓库布局
+#       docs/05 数据与存储
+# ----------------------------------------------------------------
+
+
+# ============================================================
+# 1. 模型权重 (合规底线 — AC-9)
+# ============================================================
+# InsightFace buffalo_* / SCRFD / ArcFace / AdaFace / MagFace / MobileFaceNet
+# 自训 ONNX / PyTorch checkpoint / TensorFlow SavedModel / pickle 任何 ML 序列化
+*.onnx
+*.pt
+*.pth
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.pb
+*.safetensors
+*.tflite
+*.engine            # TensorRT engine
+*.trt
+*.caffemodel
+*.prototxt
+
+# InsightFace / dlib / 任何 ML 框架本地缓存根
+.insightface/
+.dlib/
+.face_evoLVe/
+insightface_cache/
+
+# 自定义模型目录
+models/
+checkpoints/
+ckpts/
+weights/
+
+# ============================================================
+# 2. 训练数据 (合规底线 — 避免大文件 + 个人肖像)
+# ============================================================
+# 不让 demo 数据集 / WebFace4M / Glint360K 等大文件入仓
+# 文档里只放 README + 生成脚本, 数据走 git-lfs 或独立下载
+bench/dataset_demo/raw/
+bench/dataset_demo/img/
+bench/dataset_demo/**/*.jpg
+bench/dataset_demo/**/*.jpeg
+bench/dataset_demo/**/*.png
+bench/dataset_demo/**/*.heic
+bench/dataset_demo/**/*.raw
+bench/dataset_demo/**/*.cr2
+bench/dataset_demo/**/*.nef
+bench/dataset_demo/**/*.dng
+tests/fixtures/demo_dataset/raw/
+tests/fixtures/demo_dataset/img/
+tests/fixtures/**/*.jpg
+tests/fixtures/**/*.jpeg
+tests/fixtures/**/*.png
+
+# ============================================================
+# 3. Python 构建 / 制品 (绝不进仓)
+# ============================================================
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+*.whl
+*.tar.gz
+pip-wheel-cache/
+pip-cache/
+
+# 字节码
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 类型 stub
+*.pyi.bak
+
+# ============================================================
+# 4. 虚拟环境 (uv / venv / conda / poetry)
+# ============================================================
+.venv/
+venv/
+env/
+.conda/
+.python-version.bak
+.python-version.tmp
+
+# ============================================================
+# 5. 测试 / 静态分析 缓存
+# ============================================================
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.pyright_cache/
+.bandit/
+.dmypy.json
+dmypy.json
+pip-audit-cache/
+.pyre/
+.pytype/
+
+# ============================================================
+# 6. 运行期数据 (用户机器上生成的产物, 不入仓)
+# ============================================================
+# docs/05 + docs/08 §6.4 输出目录布局
+.cache/
+.staging-*/
+.staging-*/
+.prev-*/
+.lock
+index.json
+report.md
+report.html
+low_confidence_faces.json
+
+# person-* 输出目录 (跑过 pick-face run 后才有)
+person-*/
+_archive/
+_review/
+
+# pick-face 自己 demo 跑的产物
+out/
+demo_out/
+tmp_out/
+test_output/
+
+# ============================================================
+# 7. 诊断 / 临时 (--diagnostics 才落地, 但仓里也不要)
+# ============================================================
+diagnostics-*.zip
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+*.orig
+*.rej
+*~
+
+# ============================================================
+# 8. 密钥 / 凭据 / 私配置
+# ============================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.secrets.toml
+secrets.yaml
+secrets.yml
+credentials.json
+service-account*.json
+*.kubeconfig
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+
+# ============================================================
+# 9. IDE / 编辑器
+# ============================================================
+# JetBrains
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# VS Code (显式提交 .vscode/settings.json 共享配置, 其余排除)
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/ruff.json
+
+# Cursor
+.cursor/
+.cursorrules.bak
+
+# Spyder / Spyder-env
+.spyderproject
+.spyproject
+.spyder-env/
+
+# Vim / Emacs
+.vim/
+.emacs.d/
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ============================================================
+# 10. 操作系统
+# ============================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+.nfs*
+
+# ============================================================
+# 11. 文档构建 (mkdocs / sphinx)
+# ============================================================
+site/
+docs/_build/
+docs/.cache/
+.mkdocs/
+.mkdocs.yml.bak
+*.doctree
+
+# ============================================================
+# 12. CI / Docker 临时
+# ============================================================
+.docker/
+docker-compose.override.yml
+docker-compose.override.yaml
+*.dockerfile.bak
+
+# ============================================================
+# 13. Node / 前端 (v0.x 未用, 预留)
+# ============================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.parcel-cache/
+.next/
+.nuxt/
+.vite/
+
+# ============================================================
+# 14. 大文件 / 二进制
+# ============================================================
+*.zip
+!docs/**/*.zip           # 允许 docs 下文档附件 (v0.x 未用, 留口子)
+*.rar
+*.7z
+*.tar
+*.tgz
+*.iso
+*.dmg
+*.pkg
+*.msi
+*.deb
+*.rpm
+
+# ============================================================
+# 15. uv / pip-tools 自身
+# ============================================================
+# 注意: requirements.lock 必须进仓 (可复现), 不能 ignore
+uv.lock.bak
+.uv-cache/
+uv-cache/

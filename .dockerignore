@@ -1,0 +1,193 @@
+# pick-face .dockerignore
+# ----------------------------------------------------------------
+# Docker build context 黑名单。
+# 原则: build context 越小越好; 模型/数据/虚拟环境/历史 绝不能进镜像层。
+# 关联: docs/11 §3.1 商业合规护栏
+#       docs/11 §3.5 test_no_model_in_distribution.py 强制检查
+#       docs/03 §11.5 模型与本地离线镜像
+#       docs/06 §7.4 镜像策略 (v0.2 才正式出 docker, v0.1 预留)
+# ----------------------------------------------------------------
+
+
+# === 商业合规: 模型权重绝不进镜像 (与 .gitignore 同源) ===
+*.onnx
+*.pt
+*.pth
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.pb
+*.safetensors
+*.tflite
+*.engine
+*.trt
+*.caffemodel
+*.prototxt
+
+.insightface/
+.dlib/
+.face_evoLVe/
+insightface_cache/
+models/
+checkpoints/
+ckpts/
+weights/
+
+# === 训练数据 (大文件 + 肖像合规) ===
+bench/dataset_demo/raw/
+bench/dataset_demo/img/
+bench/dataset_demo/**/*.jpg
+bench/dataset_demo/**/*.jpeg
+bench/dataset_demo/**/*.png
+bench/dataset_demo/**/*.heic
+bench/dataset_demo/**/*.raw
+bench/dataset_demo/**/*.cr2
+bench/dataset_demo/**/*.nef
+bench/dataset_demo/**/*.dng
+tests/fixtures/demo_dataset/raw/
+tests/fixtures/demo_dataset/img/
+tests/fixtures/**/*.jpg
+tests/fixtures/**/*.jpeg
+tests/fixtures/**/*.png
+
+
+# === Python 制品 (镜像里只要 src/, 不要构建产物) ===
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+*.whl
+*.tar.gz
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+
+# === 虚拟环境 (镜像里用 uv 自己装, 不带宿主的 venv) ===
+.venv/
+venv/
+env/
+.conda/
+
+
+# === 测试 / 静态分析缓存 ===
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.pyright_cache/
+.bandit/
+.dmypy.json
+dmypy.json
+
+
+# === 运行时数据 (用户数据, 不入镜像) ===
+.cache/
+.staging-*/
+.prev-*/
+.lock
+index.json
+out/
+demo_out/
+test_output/
+
+
+# === 诊断 / 临时 ===
+diagnostics-*.zip
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+*.orig
+*.rej
+*~
+
+
+# === 密钥 / 凭据 ===
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+.secrets.toml
+secrets.yaml
+secrets.yml
+credentials.json
+service-account*.json
+id_rsa
+id_dsa
+
+
+# === IDE / 编辑器 (镜像里不需要) ===
+.idea/
+.vscode/
+.cursor/
+.spyderproject
+.spyproject
+.spyder-env/
+*.iml
+*.iws
+*.ipr
+
+
+# === 操作系统 (宿主的 DS_Store 等) ===
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+
+# === 文档构建产物 (镜像里只读 docs/*.md, 不读 site/) ===
+site/
+docs/_build/
+docs/.cache/
+
+
+# === CI / Docker 自身 ===
+.docker/
+docker-compose.override.yml
+docker-compose.override.yaml
+.github/
+.git/
+.gitignore
+.gitattributes
+.dockerignore
+Dockerfile.bak
+
+
+# === 大文件 / 二进制 ===
+*.zip
+!docs/**/*.zip
+*.rar
+*.7z
+*.iso
+*.dmg
+*.pkg
+*.msi
+*.deb
+*.rpm
+node_modules/
+
+
+# === uv 自身缓存 ===
+.uv-cache/
+uv-cache/
+
+
+# === 故意要带进镜像的 (留白, 用 ! 显式) ===
+# 注意: Dockerfile 里用 `uv pip install -e ".[dev]"` 拉依赖, 不需要 requirements.txt 进 context
+# 但要带: src/  tests/  migrations/  pyproject.toml  requirements.lock  docs/  README.md  LICENSE
+!pyproject.toml
+!requirements.lock
+!README.md
+!LICENSE
