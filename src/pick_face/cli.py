@@ -7,8 +7,11 @@
 
 from __future__ import annotations
 
+import shutil
+import signal
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -25,7 +28,9 @@ from pick_face.errors import (
     ConfigError,
     ModelLoadError,
     ModelNotFoundError,
+    OutputNotWritableError,
     PickFaceError,
+    SourceNotFoundError,
 )
 from pick_face.index import open_db
 
@@ -80,6 +85,22 @@ def _exit(exc: BaseException) -> None:
     _errprint(exc)
     code = exc.exit_code if isinstance(exc, PickFaceError) else 1
     raise SystemExit(code)
+
+
+def _now() -> float:
+    """Monotonic-clock-ish; seconds since epoch (UTC)."""
+    return time.time()
+
+
+def _now_run_id() -> str:
+    """UTC timestamp suitable for naming .prev-<run_id> snapshots."""
+    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+
+
+def _on_sigterm(signum, frame):
+    """Translate SIGTERM/SIGBREAK into exit code 5 (InterruptedError contract)."""
+    console.print(f"[yellow]received signal {signum}; exiting rc=5[/yellow]")
+    sys.exit(5)
 
 
 def _version_callback(value: bool) -> None:
@@ -678,8 +699,71 @@ def gc(
         Path, typer.Option("--config", "-c")
     ] = Path("pick-face.toml"),
 ) -> None:
-    """Clean dangling links + expired thumbs (docs/03 §9 + docs/05 §6)."""
-    raise NotImplementedError("T-011 GC: dangling link cleanup")
+    """Clean dangling links + expired thumbs (docs/03 §9 + docs/05 §6).
+
+    Walks the cluster directories under *out*; for each entry that is a
+    symlink or hardlink whose target no longer exists, we delete the
+    dead entry from disk and remove the matching row in `link` and any
+    faces whose source row was lost. Orphan rows in `source` are marked
+    `missing` so the report still sees them.
+    """
+    out = out.resolve()
+    if not out.exists():
+        _exit(OutputNotWritableError(f"--out {out} does not exist"))
+
+    db_path = out / ".cache" / "index.sqlite"
+    if not db_path.exists():
+        console.print(f"[yellow]no DB at {db_path}; nothing to gc.[/yellow]")
+        return
+
+    conn = open_db(db_path)
+    try:
+        rows = conn.execute(
+            """SELECT l.id AS link_id, l.cluster_id, l.source_id,
+                       l.rel_path, l.link_kind, l.actual_target,
+                       s.path AS src_path, s.status AS src_status
+               FROM link l JOIN source s ON s.id = l.source_id"""
+        ).fetchall()
+
+        dangling: list[tuple[int, Path, str]] = []
+        for r in rows:
+            cluster_label = conn.execute(
+                "SELECT label FROM cluster WHERE id=?", (r["cluster_id"],)
+            ).fetchone()["label"]
+            entry = out / cluster_label / Path(r["rel_path"])
+            # An entry is dangling when it doesn't exist on disk and the
+            # source is missing OR the resolved target no longer resolves.
+            target = r["actual_target"] or r["src_path"]
+            try:
+                if entry.is_symlink() and not (entry.exists() or entry.resolve().exists()):
+                    dangling.append((int(r["link_id"]), entry, "symlink-broken"))
+                elif entry.exists() and not Path(target).exists():
+                    dangling.append((int(r["link_id"]), entry, "target-missing"))
+            except OSError:
+                dangling.append((int(r["link_id"]), entry, "resolve-error"))
+
+        cleaned = 0
+        for link_id, entry, _reason in dangling:
+            try:
+                entry.unlink()
+            except OSError:
+                continue
+            conn.execute("DELETE FROM link WHERE id=?", (link_id,))
+            cleaned += 1
+
+        # Mark orphaned source rows.
+        now = _now()
+        for r in rows:
+            if r["src_status"] == "active" and not Path(r["src_path"]).exists():
+                conn.execute(
+                    "UPDATE source SET status='missing', last_seen=? WHERE id=?",
+                    (now, r["source_id"]),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+    console.print(f"[bold]gc[/bold]  removed {cleaned} dangling link(s) out of {len(rows)}")
 
 
 @app.command()
@@ -692,8 +776,49 @@ def prune(
         int, typer.Option("--keep", help="How many .prev- to keep.")
     ] = 3,
 ) -> None:
-    """Clean _archive/ and old .prev- snapshots (docs/05 §6)."""
-    raise NotImplementedError("T-011 prune: archive cleanup")
+    """Clean _archive/ and old .prev- snapshots (docs/05 §6).
+
+    Keeps the *keep_n* most recent .prev-<run_id> siblings of *out* and
+    deletes the rest, plus any empty `_archive/` directories.
+    """
+    out = out.resolve()
+    parent = out.parent
+    name = out.name
+    if not parent.exists():
+        _exit(OutputNotWritableError(f"--out parent {parent} does not exist"))
+
+    prev_dirs = sorted(
+        [p for p in parent.iterdir() if p.is_dir() and p.name.startswith(f"{name}.prev-")],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    victims = prev_dirs[keep_n:]
+    deleted = 0
+    for v in victims:
+        try:
+            shutil.rmtree(v)
+            deleted += 1
+        except OSError as e:
+            console.print(f"[yellow]could not remove {v}: {e}[/yellow]")
+
+    # Drop empty _archive/ directories under *out*.
+    archive = out / "_archive"
+    if archive.exists():
+        for child in archive.rglob("*"):
+            if child.is_dir():
+                try:
+                    child.rmdir()
+                except OSError:
+                    pass
+        try:
+            archive.rmdir()
+        except OSError:
+            pass
+
+    console.print(
+        f"[bold]prune[/bold]  removed {deleted} old .prev- snapshot(s) "
+        f"(kept {min(keep_n, len(prev_dirs))})"
+    )
 
 
 @app.command()
@@ -703,9 +828,42 @@ def rollback(
     config_file: Annotated[
         Path, typer.Option("--config", "-c")
     ] = Path("pick-face.toml"),
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation.")] = False,
 ) -> None:
-    """Swap <out> with <out>/.prev-<run_id> (docs/05 §6 + ADR-008)."""
-    raise NotImplementedError("T-011 rollback: rename .prev- back to <out>")
+    """Swap <out> with <out>/.prev-<run_id> (docs/05 §6 + ADR-008).
+
+    The current *out* is moved to `.prev-<new_ts>` and the named
+    snapshot becomes the live output. This is the user-visible
+    "undo" affordance paired with the atomic link swap.
+    """
+    out = out.resolve()
+    parent = out.parent
+    name = out.name
+    target = parent / f"{name}.prev-{to}"
+    if not target.exists():
+        _exit(SourceNotFoundError(f"snapshot {target} does not exist"))
+
+    if not yes:
+        console.print(
+            f"About to swap:\n"
+            f"  current → {parent / (name + '.prev-' + _now_run_id())}\n"
+            f"  restore ← {target}"
+        )
+        try:
+            reply = input("Type 'rollback' to continue: ")
+        except EOFError:
+            reply = ""
+        if reply.strip() != "rollback":
+            _exit(CliArgError("Aborted by user"))
+
+    # Move current aside, then move the chosen prev into place.
+    current_backup = parent / f"{name}.prev-{_now_run_id()}"
+    if out.exists():
+        out.rename(current_backup)
+    target.rename(out)
+    console.print(
+        f"[green]rolled back to[/green] {out}  (current is now at {current_backup})"
+    )
 
 
 @app.command()
@@ -716,8 +874,43 @@ def rebuild(
     ] = Path("pick-face.toml"),
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation.")] = False,
 ) -> None:
-    """Wipe .cache/ and .prev-* and run from scratch."""
-    raise NotImplementedError("T-011 rebuild: wipe + full scan/index/cluster")
+    """Wipe .cache/ and .prev-* and run from scratch.
+
+    Removes `.cache/index.sqlite` plus all `.prev-*` siblings of *out*,
+    then signals the caller (orchestrator) that the next scan/index/
+    cluster/link cycle should be in `rebuild` mode.
+
+    Reference: docs/05 §6.3 (rebuild mode is the same as running each
+    stage with --rebuild where applicable).
+    """
+    out = out.resolve()
+    if not out.exists():
+        _exit(OutputNotWritableError(f"--out {out} does not exist"))
+
+    if not yes:
+        console.print(
+            f"This will DELETE:\n"
+            f"  - {out / '.cache'}/index.sqlite\n"
+            f"  - all {out.parent / (out.name + '.prev-*')}\n"
+            f"and re-run the next scan → index → cluster → link cycle."
+        )
+        try:
+            reply = input("Type 'wipe' to continue: ")
+        except EOFError:
+            reply = ""
+        if reply.strip() != "wipe":
+            _exit(CliArgError("Aborted by user"))
+
+    cache = out / ".cache"
+    if cache.exists():
+        shutil.rmtree(cache)
+    for prev in out.parent.glob(f"{out.name}.prev-*"):
+        if prev.is_dir():
+            shutil.rmtree(prev)
+    console.print(
+        f"[bold]rebuild[/bold]  cache wiped; next `pick-face run` will "
+        f"start from a fresh scan."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -735,6 +928,11 @@ def main() -> None:
     exit_code (per docs/03 §9 + docs/11 §3.6); everything else falls
     through to Python's default rc=1.
     """
+    # SIGTERM (and SIGBREAK on Windows) should look the same to the
+    # caller as a normal rc=5 exit (docs/03 §9 extension: "Interrupted").
+    signal.signal(signal.SIGTERM, _on_sigterm)
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, _on_sigterm)
     try:
         try:
             app(standalone_mode=False)
@@ -744,6 +942,7 @@ def main() -> None:
             code = e.exit_code if isinstance(e.exit_code, int) else 1
             sys.exit(code)
     except KeyboardInterrupt:
+        console.print("[yellow]interrupted by user (Ctrl+C)[/yellow]")
         sys.exit(130)
     except SystemExit:
         raise
