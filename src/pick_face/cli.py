@@ -571,6 +571,17 @@ def cluster(
                 f"(threshold<{cfg.clustering.low_confidence:.2f})  → {lc_path}"
             )
 
+        # T-108: write meta.json per cluster + top-level index.json (docs/05 §5).
+        # These are grep/debug mirrors; SQLite remains authoritative.
+        from pick_face.mirrors import write_all_cluster_metas, write_index_json
+
+        meta_paths = write_all_cluster_metas(conn, out)
+        idx_path = write_index_json(conn, out)
+        console.print(
+            f"  mirrors  index.json → {idx_path}  "
+            f"({len(meta_paths)} cluster meta.json)"
+        )
+
         console.print(
             f"[bold]cluster[/bold]  clusters={result.n_clusters}  noise={result.n_noise}  "
             f"faces={len(face_ids)}"
@@ -709,6 +720,12 @@ def report(
             help="Also regenerate low_confidence_faces.json (T-105).",
         ),
     ] = True,
+    write_mirrors: Annotated[
+        bool, typer.Option(
+            "--write-mirrors/--no-mirrors",
+            help="Also regenerate meta.json per cluster + index.json (T-108).",
+        ),
+    ] = True,
 ) -> None:
     """Render report.{md,json,html} with top-line Model+License header (T-009)."""
     import json as _json
@@ -726,6 +743,15 @@ def report(
                 conn, out_dir=out, threshold=cfg.clustering.low_confidence,
             )
             console.print(f"[green]wrote[/green] {lc}")
+        if write_mirrors:
+            from pick_face.mirrors import write_all_cluster_metas, write_index_json
+
+            meta_paths = write_all_cluster_metas(conn, out)
+            idx_path = write_index_json(conn, out)
+            console.print(
+                f"[green]wrote[/green] {idx_path} "
+                f"({len(meta_paths)} cluster meta.json)"
+            )
     finally:
         conn.close()
     console.print(f"[green]wrote[/green] {target}")
