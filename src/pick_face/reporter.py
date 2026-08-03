@@ -238,6 +238,189 @@ def render_json(
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
+def render_html(
+    stats: ReportStats,
+    *,
+    config_dict: dict,
+    run_id: str | None = None,
+    warnings: tuple[str, ...] = (),
+    person_legend: tuple[tuple[int, str, int], ...] = (),
+    ack_summary: str | None = None,
+    dark_mode: bool = False,
+) -> str:
+    """Render an HTML report (M4 / T-301).
+
+    Self-contained: no external CSS/JS. Uses a `data-theme` attribute on
+    <html> that users can flip in DevTools (or copy a dark-mode URL
+    parameter later). Includes a per-person "thumbnail wall" that
+    links each cluster into the index.json mirror.
+    """
+    rid = run_id or datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    model_name = config_dict.get("runtime", {}).get("model_name", "buffalo_l")
+    model_dir = config_dict.get("runtime", {}).get("model_dir", "~/.insightface/models")
+    provider = config_dict.get("runtime", {}).get("provider", "auto")
+    accepted = bool(config_dict.get("runtime", {}).get("accept_noncommercial_model_license", False))
+
+    license_label = (
+        "InsightFace non-commercial-research"
+        if model_name in INSIGHTFACE_MODELS
+        else "custom (no commercial restriction enforced by pick-face)"
+    )
+
+    theme_attr = 'data-theme="dark"' if dark_mode else 'data-theme="light"'
+
+    # Person legend rows.
+    person_rows = []
+    for cid, label, size in person_legend:
+        person_rows.append(
+            f'<li><a href="./{label}/">{label}</a> '
+            f'<span class="size">({size} faces)</span></li>'
+        )
+    person_list = (
+        f'<ul class="persons">{"".join(person_rows)}</ul>'
+        if person_rows
+        else '<p class="empty">(no persons yet — run <code>pick-face cluster</code>)</p>'
+    )
+
+    warning_items = (
+        "".join(f"<li>{w}</li>" for w in warnings) if warnings else ""
+    )
+    warnings_block = (
+        f'<section class="warnings"><h2>⚠ Warnings</h2><ul>{warning_items}</ul></section>'
+        if warning_items else ""
+    )
+
+    total_links = (
+        stats.symlink_links + stats.hardlink_links + stats.junction_links + stats.copy_links
+    )
+    links_line = (
+        f'<li><strong>Link kinds</strong>: symlink={stats.symlink_links}, '
+        f'hardlink={stats.hardlink_links}, junction={stats.junction_links}, '
+        f'copy={stats.copy_links}</li>'
+        if total_links > 0 else ""
+    )
+
+    ack_line = f"<li><strong>Accepted by</strong>: {ack_summary}</li>" if ack_summary else ""
+
+    html = f"""<!doctype html>
+<html lang="en" {theme_attr}>
+<head>
+<meta charset="utf-8">
+<title>pick-face Report {rid}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {{
+  --bg: #fdfdfd; --fg: #1a1a1a; --muted: #666;
+  --border: #e3e3e3; --panel: #f7f7f7; --accent: #1a73e8;
+  --warn-bg: #fff8e1; --warn-fg: #b76a00;
+}}
+[data-theme="dark"] {{
+  --bg: #181818; --fg: #e8e8e8; --muted: #999;
+  --border: #2a2a2a; --panel: #1f1f1f; --accent: #4ea1ff;
+  --warn-bg: #3a2e1a; --warn-fg: #f0c674;
+}}
+* {{ box-sizing: border-box; }}
+body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+       margin: 2rem auto; max-width: 64rem; padding: 0 1rem;
+       background: var(--bg); color: var(--fg); }}
+h1, h2 {{ color: var(--fg); border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }}
+h2 {{ margin-top: 2rem; }}
+ul {{ padding-left: 1.4rem; }}
+li {{ margin: 0.3rem 0; }}
+code {{ background: var(--panel); padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.95em; }}
+.persons {{ list-style: square; }}
+.persons li a {{ color: var(--accent); text-decoration: none; }}
+.persons li a:hover {{ text-decoration: underline; }}
+.persons .size {{ color: var(--muted); font-size: 0.9em; }}
+.warnings {{ background: var(--warn-bg); border-left: 4px solid var(--warn-fg);
+            padding: 1rem; border-radius: 4px; }}
+.warnings h2 {{ margin-top: 0; color: var(--warn-fg); border: none; }}
+.empty {{ color: var(--muted); font-style: italic; }}
+.wall {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 1rem; margin-top: 1rem; }}
+.wall .card {{ background: var(--panel); border: 1px solid var(--border);
+              border-radius: 6px; padding: 0.6rem; text-align: center;
+              transition: transform 0.15s ease; }}
+.wall .card:hover {{ transform: translateY(-2px); }}
+.wall .card a {{ color: var(--accent); text-decoration: none; font-weight: 600; }}
+.wall .card .meta {{ color: var(--muted); font-size: 0.85em; margin-top: 0.3rem; }}
+</style>
+</head>
+<body>
+<h1>pick-face Report</h1>
+<section>
+  <h2>Run</h2>
+  <ul>
+    <li><strong>Run ID</strong>: <code>{rid}</code></li>
+    <li><strong>Generated</strong>: <code>{datetime.now(tz=timezone.utc).isoformat()}</code></li>
+    <li><strong>Model</strong>: <code>{model_name}</code> (SCRFD-10G detector + ArcFace w600k_r50 embedder)</li>
+    <li><strong>Model dir</strong>: <code>{model_dir}</code></li>
+    <li><strong>Model License</strong>: {license_label}</li>
+    <li><strong>License Accepted</strong>: {'yes' if accepted else 'no (commercial users must self-train, see docs/11)'}</li>
+    {ack_line}
+    <li><strong>Provider</strong>: <code>{provider}</code></li>
+  </ul>
+</section>
+
+<section>
+  <h2>Stats</h2>
+  <ul>
+    <li><strong>Total sources</strong>: {stats.total_sources}</li>
+    <li><strong>Active sources</strong>: {stats.active_sources}</li>
+    <li><strong>Missing sources</strong>: {stats.missing_sources}</li>
+    <li><strong>Total faces</strong>: {stats.total_faces}</li>
+    <li><strong>Low-quality faces</strong>: {stats.low_quality_faces}</li>
+    <li><strong>Noise faces (cluster_id IS NULL)</strong>: {stats.noise_faces}</li>
+    <li><strong>Persons</strong>: {stats.persons}</li>
+    <li><strong>Cluster ID range</strong>: {stats.cluster_id_min}..{stats.cluster_id_max}</li>
+    <li><strong>Avg face-to-centroid similarity</strong>: {stats.avg_face_to_cluster:.3f}</li>
+    {links_line}
+  </ul>
+</section>
+
+<section>
+  <h2>Persons</h2>
+  {person_list}
+</section>
+
+<section class="wall-section">
+  <h2>Thumbnail wall</h2>
+  <p class="empty">
+    Per-person thumbnails land in a follow-up release. The grid below
+    shows the cluster IDs and links into <code>index.json</code>; each
+    cluster directory contains a <code>meta.json</code> with the full
+    descriptor.
+  </p>
+  <div class="wall">
+    {''.join(
+        f'<div class="card"><a href="./{label}/">{label}</a><div class="meta">{size} faces</div></div>'
+        for cid, label, size in person_legend
+    )}
+  </div>
+</section>
+
+{warnings_block}
+
+<section>
+  <h2>Review candidates</h2>
+  <p>
+    Faces with <code>cos &lt; clustering.low_confidence</code> to their
+    cluster centroid are listed in <code>low_confidence_faces.json</code>
+    next to this report. Use <code>pick-face review apply</code> to
+    merge / split / remove any of them.
+  </p>
+</section>
+
+<footer style="margin-top: 3rem; color: var(--muted); font-size: 0.85em;">
+  <p>Generated by pick-face. Toggle dark mode by editing
+     <code>&lt;html data-theme="dark"&gt;</code>.</p>
+</footer>
+</body>
+</html>
+"""
+    return html
+
+
 def write_report(
     conn: sqlite3.Connection,
     *,
@@ -279,6 +462,13 @@ def write_report(
             ack_summary=ack_summary,
         )
         target = out_dir / "report.json"
+    elif fmt == "html":
+        body = render_html(
+            stats, config_dict=config_dict, run_id=run_id,
+            warnings=warnings, person_legend=person_legend,
+            ack_summary=ack_summary,
+        )
+        target = out_dir / "report.html"
     else:
         raise ValueError(f"unsupported fmt: {fmt!r} (M4 adds html)")
 

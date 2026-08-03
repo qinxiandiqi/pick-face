@@ -165,7 +165,7 @@ def test_write_report_json_renders_to_json(populated_db, tmp_pure: Path) -> None
 def test_write_report_rejects_unknown_fmt(populated_db, tmp_pure: Path) -> None:
     with pytest.raises(ValueError):
         write_report(populated_db, out_dir=tmp_pure,
-                     config_dict=_config_dict(PickFaceConfig()), fmt="html")
+                     config_dict=_config_dict(PickFaceConfig()), fmt="xml")
 
 
 def test_warnings_for_acknowledged_compliance(populated_db) -> None:
