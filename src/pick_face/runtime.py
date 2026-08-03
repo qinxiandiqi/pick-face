@@ -46,19 +46,66 @@ def resolve_providers(requested: str) -> list[str]:
 
 
 def _probe_providers() -> list[str]:
-    """Best-effort probe: cuda → directml → cpu.
+    """Best-effort probe: cuda → directml → cpu (docs/03 §3, M3 / T-201).
 
-    Cheap and side-effect-free: just imports ``onnxruntime`` once.
+    Enumerates the actually-installed onnxruntime providers and returns
+    the chain in priority order. The first entry is the primary; the
+    trailing CPUExecutionProvider is always present as a hard fallback
+    so we never crash on a missing GPU runtime.
+
+    Notes on coverage:
+      - `onnxruntime-gpu` ships CUDA + TensorRT EP.
+      - `onnxruntime-directml` ships the DirectML EP (Windows-friendly).
+      - The base `onnxruntime` is CPU-only.
+    Detection is one call to `get_available_providers()` (~10 ms once
+    onnxruntime is imported), so this is safe to run on every CLI start.
     """
     try:
-        import onnxruntime  # noqa: F401
+        import onnxruntime as ort  # noqa: F401
     except ImportError as e:
         raise ModelLoadError(
             "onnxruntime is not installed; install pick-face[gpu] or pick-face[gpu-cuda12]"
         ) from e
-    # We don't enumerate providers here (it can take ~200 ms on cold start);
-    # the runtime decision happens at the first model prepare().
-    return ["CPUExecutionProvider"]
+
+    try:
+        available = set(ort.get_available_providers())
+    except Exception:
+        available = set()
+
+    chain: list[str] = []
+    if "CUDAExecutionProvider" in available:
+        chain.append("CUDAExecutionProvider")
+    if "TensorrtExecutionProvider" in available:
+        chain.append("TensorrtExecutionProvider")
+    if "DmlExecutionProvider" in available:
+        chain.append("DmlExecutionProvider")
+    # CPU is always the trailing fallback.
+    if "CPUExecutionProvider" not in chain:
+        chain.append("CPUExecutionProvider")
+    return chain
+
+
+def describe_provider_chain(providers: list[str]) -> str:
+    """Render a provider chain as a short human-readable summary (T-201).
+
+    Used by the CLI startup banner and report header so the user knows
+    which accelerators were attempted / fell back.
+    """
+    if not providers:
+        return "(no providers)"
+    primary = providers[0]
+    fallbacks = providers[1:]
+    base = {
+        "CUDAExecutionProvider": "CUDA",
+        "TensorrtExecutionProvider": "TensorRT",
+        "DmlExecutionProvider": "DirectML",
+        "CPUExecutionProvider": "CPU",
+    }
+    head = base.get(primary, primary)
+    if fallbacks:
+        tail = " → ".join(base.get(p, p) for p in fallbacks)
+        return f"{head} (fallback: {tail})"
+    return head
 
 
 def check_commercial(cfg: PickFaceConfig) -> None:
