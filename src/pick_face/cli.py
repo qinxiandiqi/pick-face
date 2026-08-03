@@ -74,6 +74,20 @@ def _errprint(exc: BaseException) -> None:
         console.print(f"[red]Unhandled error:[/red] {exc}")
 
 
+def _dry_run_panel(plan: list[str], title: str = "DRY-RUN") -> None:
+    """Render a 'what would happen' panel for destructive commands (T-106).
+
+    Used by gc / prune / rollback / rebuild when `--dry-run` is passed.
+    The action list is rendered with [yellow] styling so the user can
+    see at a glance that nothing actually changed.
+    """
+    if not plan:
+        console.print(Panel.fit("[dim](nothing to do)[/dim]", title=title))
+        return
+    body = "\n".join(f"  • {step}" for step in plan)
+    console.print(Panel.fit(body, title=title, border_style="yellow"))
+
+
 def _exit(exc: BaseException) -> None:
     """Print + exit with the error's contract exit code (docs/03 §9).
 
@@ -762,6 +776,13 @@ def gc(
     config_file: Annotated[
         Path, typer.Option("--config", "-c")
     ] = Path("pick-face.toml"),
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="List what would be deleted; do not touch disk or DB (T-106).",
+        ),
+    ] = False,
 ) -> None:
     """Clean dangling links + expired thumbs (docs/03 §9 + docs/05 §6).
 
@@ -770,6 +791,9 @@ def gc(
     dead entry from disk and remove the matching row in `link` and any
     faces whose source row was lost. Orphan rows in `source` are marked
     `missing` so the report still sees them.
+
+    With `--dry-run` we only list the plan and exit 0 — nothing on disk
+    or in the DB is modified.
     """
     out = out.resolve()
     if not out.exists():
@@ -790,13 +814,12 @@ def gc(
         ).fetchall()
 
         dangling: list[tuple[int, Path, str]] = []
+        orphans: list[tuple[int, str]] = []
         for r in rows:
             cluster_label = conn.execute(
                 "SELECT label FROM cluster WHERE id=?", (r["cluster_id"],)
             ).fetchone()["label"]
             entry = out / cluster_label / Path(r["rel_path"])
-            # An entry is dangling when it doesn't exist on disk and the
-            # source is missing OR the resolved target no longer resolves.
             target = r["actual_target"] or r["src_path"]
             try:
                 if entry.is_symlink() and not (entry.exists() or entry.resolve().exists()):
@@ -805,6 +828,18 @@ def gc(
                     dangling.append((int(r["link_id"]), entry, "target-missing"))
             except OSError:
                 dangling.append((int(r["link_id"]), entry, "resolve-error"))
+            if r["src_status"] == "active" and not Path(r["src_path"]).exists():
+                orphans.append((int(r["source_id"]), str(r["src_path"])))
+
+        plan: list[str] = []
+        for link_id, entry, reason in dangling:
+            plan.append(f"unlink {entry}  (link_id={link_id}, {reason})")
+        for sid, path in orphans:
+            plan.append(f"mark source missing: {path}  (id={sid})")
+
+        if dry_run:
+            _dry_run_panel(plan, title="gc (dry-run)")
+            return
 
         cleaned = 0
         for link_id, entry, _reason in dangling:
@@ -815,14 +850,12 @@ def gc(
             conn.execute("DELETE FROM link WHERE id=?", (link_id,))
             cleaned += 1
 
-        # Mark orphaned source rows.
         now = _now()
-        for r in rows:
-            if r["src_status"] == "active" and not Path(r["src_path"]).exists():
-                conn.execute(
-                    "UPDATE source SET status='missing', last_seen=? WHERE id=?",
-                    (now, r["source_id"]),
-                )
+        for sid, _path in orphans:
+            conn.execute(
+                "UPDATE source SET status='missing', last_seen=? WHERE id=?",
+                (now, sid),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -839,11 +872,16 @@ def prune(
     keep_n: Annotated[
         int, typer.Option("--keep", help="How many .prev- to keep.")
     ] = 3,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Plan only; do not delete (T-106).")
+    ] = False,
 ) -> None:
     """Clean _archive/ and old .prev- snapshots (docs/05 §6).
 
     Keeps the *keep_n* most recent .prev-<run_id> siblings of *out* and
     deletes the rest, plus any empty `_archive/` directories.
+
+    With `--dry-run` we list what would be removed and exit 0.
     """
     out = out.resolve()
     parent = out.parent
@@ -857,6 +895,15 @@ def prune(
         reverse=True,
     )
     victims = prev_dirs[keep_n:]
+    plan: list[str] = [f"rmtree {v}" for v in victims]
+    archive = out / "_archive"
+    if archive.exists():
+        plan.append(f"rmdir (recursive) {archive}")
+
+    if dry_run:
+        _dry_run_panel(plan, title="prune (dry-run)")
+        return
+
     deleted = 0
     for v in victims:
         try:
@@ -865,8 +912,6 @@ def prune(
         except OSError as e:
             console.print(f"[yellow]could not remove {v}: {e}[/yellow]")
 
-    # Drop empty _archive/ directories under *out*.
-    archive = out / "_archive"
     if archive.exists():
         for child in archive.rglob("*"):
             if child.is_dir():
@@ -893,12 +938,20 @@ def rollback(
         Path, typer.Option("--config", "-c")
     ] = Path("pick-face.toml"),
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation.")] = False,
+    dry_run: Annotated[
+        bool, typer.Option(
+            "--dry-run",
+            help="Describe the swap; do not rename anything (T-106).",
+        ),
+    ] = False,
 ) -> None:
     """Swap <out> with <out>/.prev-<run_id> (docs/05 §6 + ADR-008).
 
     The current *out* is moved to `.prev-<new_ts>` and the named
     snapshot becomes the live output. This is the user-visible
     "undo" affordance paired with the atomic link swap.
+
+    With `--dry-run` we print the planned moves and exit 0.
     """
     out = out.resolve()
     parent = out.parent
@@ -907,10 +960,20 @@ def rollback(
     if not target.exists():
         _exit(SourceNotFoundError(f"snapshot {target} does not exist"))
 
+    new_ts = _now_run_id()
+    plan = [
+        f"move {out} → {parent / (name + '.prev-' + new_ts)}",
+        f"move {target} → {out}",
+    ]
+
+    if dry_run:
+        _dry_run_panel(plan, title="rollback (dry-run)")
+        return
+
     if not yes:
         console.print(
             f"About to swap:\n"
-            f"  current → {parent / (name + '.prev-' + _now_run_id())}\n"
+            f"  current → {parent / (name + '.prev-' + new_ts)}\n"
             f"  restore ← {target}"
         )
         try:
@@ -920,8 +983,7 @@ def rollback(
         if reply.strip() != "rollback":
             _exit(CliArgError("Aborted by user"))
 
-    # Move current aside, then move the chosen prev into place.
-    current_backup = parent / f"{name}.prev-{_now_run_id()}"
+    current_backup = parent / f"{name}.prev-{new_ts}"
     if out.exists():
         out.rename(current_backup)
     target.rename(out)
@@ -937,6 +999,9 @@ def rebuild(
         Path, typer.Option("--config", "-c")
     ] = Path("pick-face.toml"),
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation.")] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Plan only; do not delete (T-106).")
+    ] = False,
 ) -> None:
     """Wipe .cache/ and .prev-* and run from scratch.
 
@@ -946,10 +1011,25 @@ def rebuild(
 
     Reference: docs/05 §6.3 (rebuild mode is the same as running each
     stage with --rebuild where applicable).
+
+    With `--dry-run` we list what would be removed and exit 0.
     """
     out = out.resolve()
     if not out.exists():
         _exit(OutputNotWritableError(f"--out {out} does not exist"))
+
+    cache = out / ".cache"
+    prevs = list(out.parent.glob(f"{out.name}.prev-*"))
+    prevs = [p for p in prevs if p.is_dir()]
+    plan: list[str] = []
+    if cache.exists():
+        plan.append(f"rmtree {cache}")
+    for p in prevs:
+        plan.append(f"rmtree {p}")
+
+    if dry_run:
+        _dry_run_panel(plan, title="rebuild (dry-run)")
+        return
 
     if not yes:
         console.print(
@@ -965,12 +1045,10 @@ def rebuild(
         if reply.strip() != "wipe":
             _exit(CliArgError("Aborted by user"))
 
-    cache = out / ".cache"
     if cache.exists():
         shutil.rmtree(cache)
-    for prev in out.parent.glob(f"{out.name}.prev-*"):
-        if prev.is_dir():
-            shutil.rmtree(prev)
+    for prev in prevs:
+        shutil.rmtree(prev)
     console.print(
         f"[bold]rebuild[/bold]  cache wiped; next `pick-face run` will "
         f"start from a fresh scan."
