@@ -122,6 +122,15 @@ def render_markdown(
     lines.append(f"- **Cluster ID range**: {stats.cluster_id_min}..{stats.cluster_id_max}")
     lines.append(f"- **Avg face-to-centroid similarity**: {stats.avg_face_to_cluster:.3f}")
     lines.append("")
+    lines.append("## Review candidates")
+    lines.append("")
+    lines.append(
+        "Faces with `cos < clustering.low_confidence` to their cluster "
+        "centroid are listed in `low_confidence_faces.json` next to this "
+        "report. Use `pick-face review apply` to merge / split / remove "
+        "any of them."
+    )
+    lines.append("")
     lines.append("## Persons")
     lines.append("")
     if person_legend:
@@ -265,6 +274,114 @@ def _license_ack_line(config_dict: dict) -> str | None:
         return license_ack_summary(cfg)
     except Exception:
         return None
+
+
+def collect_low_confidence_faces(
+    conn: sqlite3.Connection,
+    *,
+    threshold: float,
+) -> list[dict]:
+    """Return faces whose similarity-to-centroid is below *threshold*.
+
+    Reference:
+        docs/04 §2.5 / docs/09 §10 — ``low_confidence_faces.json`` lists
+        every face with ``cos < low_confidence`` to its cluster centroid
+        so the user can quickly locate them via the ``review`` subcommand.
+
+    We deliberately restrict to faces that DID get assigned a cluster
+    (``cluster_id IS NOT NULL``): pure noise faces already surface in
+    the report's `noise_faces` stat and have no centroid to compare
+    against. Excluded/removed faces are skipped too — the user asked
+    them to be hidden.
+
+    Returns a list of dicts with the keys:
+        face_id (int), cluster_id (int), cluster_label (str),
+        similarity (float, 4 decimals), source_id (int), source_path (str),
+        rel_path (str), review_state (str).
+    Sorted by similarity ascending (worst first) so the top of the file
+    is where the user should look.
+    """
+    cur = conn.execute(
+        """
+        SELECT f.id          AS face_id,
+               f.cluster_id  AS cluster_id,
+               c.label       AS cluster_label,
+               f.cluster_prob AS similarity,
+               f.source_id   AS source_id,
+               s.path        AS source_path,
+               s.rel_path    AS rel_path,
+               f.review_state AS review_state
+        FROM face f
+        JOIN cluster c ON c.id = f.cluster_id
+        JOIN source  s ON s.id = f.source_id
+        WHERE f.cluster_prob IS NOT NULL
+          AND f.cluster_prob < ?
+          AND f.review_state != 'removed'
+        ORDER BY f.cluster_prob ASC, f.id ASC
+        """,
+        (float(threshold),),
+    )
+    out: list[dict] = []
+    for r in cur.fetchall():
+        out.append({
+            "face_id": int(r["face_id"]),
+            "cluster_id": int(r["cluster_id"]),
+            "cluster_label": str(r["cluster_label"]),
+            "similarity": round(float(r["similarity"]), 4),
+            "source_id": int(r["source_id"]),
+            "source_path": str(r["source_path"]),
+            "rel_path": str(r["rel_path"]),
+            "review_state": str(r["review_state"]),
+        })
+    return out
+
+
+def write_low_confidence_json(
+    conn: sqlite3.Connection,
+    *,
+    out_dir: Path,
+    threshold: float,
+    run_id: str | None = None,
+) -> Path:
+    """Write ``low_confidence_faces.json`` to *out_dir*.
+
+    Returns the absolute path of the written file. The JSON shape is:
+
+        {
+          "schema": "pick-face/low_confidence_faces@1",
+          "run_id": "2026-08-03T12-00-00",
+          "generated_at": "2026-08-03T12:00:00+00:00",
+          "threshold": 0.40,
+          "count": 12,
+          "faces": [
+            {"face_id": 123, "cluster_id": 4, "cluster_label": "person-0004",
+             "similarity": 0.21, "source_id": 9, "source_path": "...",
+             "rel_path": "2026/07/img_0001.jpg", "review_state": "auto"},
+            ...
+          ]
+        }
+
+    The schema field lets future format changes stay backward-compatible
+    — readers can check it before parsing.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    faces = collect_low_confidence_faces(conn, threshold=threshold)
+    rid = run_id or datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    payload = {
+        "schema": "pick-face/low_confidence_faces@1",
+        "run_id": rid,
+        "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+        "threshold": float(threshold),
+        "count": len(faces),
+        "faces": faces,
+    }
+    target = out_dir / "low_confidence_faces.json"
+    target.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return target
 
 
 def _warnings_for(runtime_cfg: dict, stats: ReportStats) -> tuple[str, ...]:

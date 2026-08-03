@@ -441,11 +441,18 @@ def cluster(
     rebuild: Annotated[
         bool, typer.Option("--rebuild", help="Full recluster (drop labels).")
     ] = False,
+    no_low_confidence: Annotated[
+        bool, typer.Option(
+            "--no-low-confidence",
+            help="Skip writing low_confidence_faces.json (T-105).",
+        ),
+    ] = False,
 ) -> None:
     """HDBSCAN + 2-pass centroid merge (docs/04 §2.4)."""
     from pick_face.cluster import (
         Constraint as _Constraint,  # noqa: F401  (placeholder for review consts)
         cluster_embeddings,
+        face_to_cluster_similarity,
     )
     from pick_face.config import load_config
 
@@ -478,6 +485,11 @@ def cluster(
             constraints=constraints,
         )
 
+        # Per-face similarity to its cluster centroid (docs/04 §2.5). This
+        # populates face.cluster_prob so downstream report / low-confidence
+        # writers have the data they need.
+        sims = face_to_cluster_similarity(embeddings, result.labels)
+
         # Write face.cluster_id back.
         # If rebuild, drop existing cluster rows (and their images); reuse IDs
         # where possible to keep person-XXXX paths stable (docs/04 §2.4).
@@ -498,18 +510,25 @@ def cluster(
             for new_lbl in range(result.n_clusters):
                 cid = (new_lbl + 1) if not existing else (existing[new_lbl] if new_lbl < len(existing) else (max_existing + (new_lbl - len(existing)) + 1))
                 cnt = int((result.labels == new_lbl).sum())
+                # Cluster-level mean similarity (excluding noise).
+                member_mask = result.labels == new_lbl
+                cluster_mean = (
+                    float(sims[member_mask].mean()) if member_mask.any() else 0.0
+                )
                 conn.execute(
                     """INSERT INTO cluster(id, label, size, mean_sim, created_at, updated_at)
-                       VALUES (?, ?, ?, NULL, ?, ?)
+                       VALUES (?, ?, ?, ?, ?, ?)
                        ON CONFLICT(id) DO UPDATE SET
                            size = excluded.size,
+                           mean_sim = excluded.mean_sim,
                            updated_at = excluded.updated_at""",
-                    (int(cid), f"person-{int(cid):04d}", cnt, time.time(), time.time()),
+                    (int(cid), f"person-{int(cid):04d}", cnt, cluster_mean, time.time(), time.time()),
                 )
             for i, fid in enumerate(face_ids):
+                sim_i = float(sims[i])
                 if result.labels[i] == -1:
                     conn.execute(
-                        "UPDATE face SET cluster_id = NULL WHERE id = ?",
+                        "UPDATE face SET cluster_id = NULL, cluster_prob = NULL WHERE id = ?",
                         (int(fid),),
                     )
                 else:
@@ -519,9 +538,24 @@ def cluster(
                         )
                     )
                     conn.execute(
-                        "UPDATE face SET cluster_id = ? WHERE id = ?",
-                        (int(cid), int(fid)),
+                        "UPDATE face SET cluster_id = ?, cluster_prob = ? WHERE id = ?",
+                        (int(cid), sim_i, int(fid)),
                     )
+
+        # T-105: emit low_confidence_faces.json next to the report so users
+        # can quickly see which faces need review (docs/04 §2.5 + docs/09 §10).
+        if not no_low_confidence:
+            from pick_face.reporter import write_low_confidence_json
+
+            lc_path = write_low_confidence_json(
+                conn,
+                out_dir=out,
+                threshold=cfg.clustering.low_confidence,
+            )
+            console.print(
+                f"  low_confidence_faces.json  "
+                f"(threshold<{cfg.clustering.low_confidence:.2f})  → {lc_path}"
+            )
 
         console.print(
             f"[bold]cluster[/bold]  clusters={result.n_clusters}  noise={result.n_noise}  "
@@ -642,18 +676,29 @@ def report(
     fmt: Annotated[
         str, typer.Option("--format", help="md / json / html (html M4)")
     ] = "md",
+    write_low_confidence: Annotated[
+        bool, typer.Option(
+            "--write-low-confidence/--no-low-confidence",
+            help="Also regenerate low_confidence_faces.json (T-105).",
+        ),
+    ] = True,
 ) -> None:
     """Render report.{md,json,html} with top-line Model+License header (T-009)."""
     import json as _json
 
     from pick_face.config import load_config
-    from pick_face.reporter import write_report
+    from pick_face.reporter import write_low_confidence_json, write_report
 
     cfg = load_config(config_file)
     db_path = out / ".cache" / "index.sqlite"
     conn = open_db(db_path)
     try:
         target = write_report(conn, out_dir=out, config_dict=_json.loads(_json.dumps(cfg.model_dump(mode="json"))), fmt=fmt)
+        if write_low_confidence:
+            lc = write_low_confidence_json(
+                conn, out_dir=out, threshold=cfg.clustering.low_confidence,
+            )
+            console.print(f"[green]wrote[/green] {lc}")
     finally:
         conn.close()
     console.print(f"[green]wrote[/green] {target}")
@@ -702,7 +747,7 @@ def review_apply(
     console.print(
         f"[bold]review[/bold] applied "
         f"must_link={ml} cannot_link={cl} remove={rm} rename={rn} "
-        f"(re-run \`pick-face link\` to materialize changes on disk)"
+        f"(re-run `pick-face link` to materialize changes on disk)"
     )
 
 

@@ -1623,16 +1623,16 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
-    { name = "mypy" },
+    { name = "onnxruntime-gpu" },
     { name = "pillow-heif" },
-    { name = "pip-audit" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-benchmark" },
-    { name = "pytest-cov" },
     { name = "rawpy" },
-    { name = "ruff" },
-    { name = "types-pillow" },
+]
+all-decode = [
+    { name = "pillow-heif" },
+    { name = "rawpy" },
+]
+all-gpu = [
+    { name = "onnxruntime-gpu" },
 ]
 dev = [
     { name = "mypy" },
@@ -1648,7 +1648,7 @@ gpu = [
     { name = "onnxruntime-gpu" },
 ]
 gpu-cuda12 = [
-    { name = "onnxruntime-gpu" },
+    { name = "onnxruntime-gpu", marker = "python_full_version < '3.13'" },
 ]
 gpu-directml = [
     { name = "onnxruntime-directml", version = "1.24.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1666,40 +1666,36 @@ requires-dist = [
     { name = "hdbscan", specifier = ">=0.8.30,<1" },
     { name = "hnswlib", specifier = ">=0.7,<1" },
     { name = "insightface", specifier = ">=0.7.3,<1" },
-    { name = "mypy", marker = "extra == 'all'", specifier = ">=1.10,<2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10,<2" },
     { name = "numpy", specifier = ">=1.24,<3" },
     { name = "onnxruntime", specifier = ">=1.17,<2" },
     { name = "onnxruntime-directml", marker = "extra == 'gpu-directml'", specifier = ">=1.17,<2" },
+    { name = "onnxruntime-gpu", marker = "python_full_version < '3.13' and extra == 'gpu-cuda12'", specifier = ">=1.17,<1.18" },
+    { name = "onnxruntime-gpu", marker = "extra == 'all'", specifier = ">=1.17,<2" },
+    { name = "onnxruntime-gpu", marker = "extra == 'all-gpu'", specifier = ">=1.17,<2" },
     { name = "onnxruntime-gpu", marker = "extra == 'gpu'", specifier = ">=1.17,<2" },
-    { name = "onnxruntime-gpu", marker = "extra == 'gpu-cuda12'", specifier = ">=1.17,<1.18" },
     { name = "opencv-python", specifier = ">=4.8,<5" },
     { name = "pillow", specifier = ">=10,<12" },
     { name = "pillow-heif", marker = "extra == 'all'", specifier = ">=0.16,<1" },
+    { name = "pillow-heif", marker = "extra == 'all-decode'", specifier = ">=0.16,<1" },
     { name = "pillow-heif", marker = "extra == 'heic'", specifier = ">=0.16,<1" },
-    { name = "pip-audit", marker = "extra == 'all'", specifier = ">=2.7,<3" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.7,<3" },
     { name = "platformdirs", specifier = ">=4,<5" },
-    { name = "pre-commit", marker = "extra == 'all'", specifier = ">=3.8,<5" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.8,<5" },
     { name = "pydantic", specifier = ">=2.5,<3" },
-    { name = "pytest", marker = "extra == 'all'", specifier = ">=8,<9" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<9" },
-    { name = "pytest-benchmark", marker = "extra == 'all'", specifier = ">=4,<5" },
     { name = "pytest-benchmark", marker = "extra == 'dev'", specifier = ">=4,<5" },
-    { name = "pytest-cov", marker = "extra == 'all'", specifier = ">=5,<6" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5,<6" },
     { name = "rawpy", marker = "extra == 'all'", specifier = ">=0.18,<1" },
+    { name = "rawpy", marker = "extra == 'all-decode'", specifier = ">=0.18,<1" },
     { name = "rawpy", marker = "extra == 'raw'", specifier = ">=0.18,<1" },
     { name = "rich", specifier = ">=13,<15" },
-    { name = "ruff", marker = "extra == 'all'", specifier = ">=0.6,<1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6,<1" },
     { name = "typer", specifier = ">=0.12,<1" },
-    { name = "types-pillow", marker = "extra == 'all'" },
     { name = "types-pillow", marker = "extra == 'dev'" },
     { name = "xxhash", specifier = ">=3.4,<4" },
 ]
-provides-extras = ["all", "dev", "gpu", "gpu-cuda12", "gpu-directml", "heic", "raw"]
+provides-extras = ["all", "all-decode", "all-gpu", "dev", "gpu", "gpu-cuda12", "gpu-directml", "heic", "raw"]
 
 [[package]]
 name = "pillow"
