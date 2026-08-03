@@ -38,11 +38,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Single-format extras. None of these change core behavior; they only add
+# decoders or providers that the runtime detects via importlib.util.find_spec.
 heic = ["pillow-heif>=0.16,<1"]
 raw = ["rawpy>=0.18,<1"]
+
+# Provider extras. `gpu` is the union so most users get one knob.
 gpu = ["onnxruntime-gpu>=1.17,<2"]
-gpu-cuda12 = ["onnxruntime-gpu>=1.17,<1.18"]
+gpu-cuda12 = ["onnxruntime-gpu>=1.17,<1.18; python_version<'3.13'"]
 gpu-directml = ["onnxruntime-directml>=1.17,<2"]
+
+# Dev extras. NOT shipped in `all` (test/CI don't need prod extras).
 dev = [
     "pytest>=8,<9",
     "pytest-cov>=5,<6",
@@ -53,9 +59,11 @@ dev = [
     "pip-audit>=2.7,<3",
     "types-Pillow",
 ]
-all = [
-    "pick-face[heic,raw,dev]",
-]
+
+# Convenience aggregators.
+all-decode = ["pick-face[heic,raw]"]
+all-gpu = ["pick-face[gpu]"]
+all = ["pick-face[heic,raw,gpu]"]
 
 [project.scripts]
 pick-face = "pick_face.cli:main"
