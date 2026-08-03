@@ -99,6 +99,15 @@ include = [
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
+    "mkdocs.yml",
+]
+exclude = [
+    # Tests produce scratch dirs; never ship them.
+    "tests/smoke_out",
+    "tests/__pycache__",
+    "tests/*/__pycache__",
+    # CI workflow is host-side, not user-side.
+    ".github",
 ]
 
 # ============================================================================

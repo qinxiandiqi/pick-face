@@ -1,0 +1,126 @@
+name: Release
+
+# Triggered on:
+#   - release published (build + publish to PyPI)
+#   - workflow_dispatch (manual dry-run build, no publish)
+#
+# Trusted Publishing uses OIDC — no PYPI_TOKEN secret required.
+# Configure the publisher at https://pypi.org/manage/account/publishing/
+#   Owner: qinxiandiqi
+#   Repo:  pick-face
+#   Workflow: release.yml
+#
+# M4 / T-304.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build only, do not publish"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write   # required for PyPI Trusted Publishing
+
+jobs:
+  build:
+    name: Build sdist + wheel (multi-OS matrix)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.x"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync (no extras — verify base install)
+        run: uv sync --frozen
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: AC-9: no *.onnx in artifacts
+        run: |
+          .venv/Scripts/python -c "
+          import zipfile, tarfile, sys, pathlib
+          d = pathlib.Path('dist')
+          bad = []
+          for arc in d.iterdir():
+              if arc.suffix == '.whl':
+                  with zipfile.ZipFile(arc) as z:
+                      for n in z.namelist():
+                          if n.lower().endswith(('.onnx','.onnxdata')):
+                              bad.append((arc.name, n))
+              elif arc.name.endswith('.tar.gz'):
+                  with tarfile.open(arc, 'r:gz') as t:
+                      for m in t.getmembers():
+                          if m.name.lower().endswith(('.onnx','.onnxdata')):
+                              bad.append((arc.name, m.name))
+          if bad:
+              print('AC-9 FAIL:', bad); sys.exit(1)
+          print('AC-9 OK')
+          " || python -c "
+          import zipfile, tarfile, sys, pathlib
+          d = pathlib.Path('dist')
+          bad = []
+          for arc in d.iterdir():
+              if arc.suffix == '.whl':
+                  with zipfile.ZipFile(arc) as z:
+                      for n in z.namelist():
+                          if n.lower().endswith(('.onnx','.onnxdata')):
+                              bad.append((arc.name, n))
+              elif arc.name.endswith('.tar.gz'):
+                  with tarfile.open(arc, 'r:gz') as t:
+                      for m in t.getmembers():
+                          if m.name.lower().endswith(('.onnx','.onnxdata')):
+                              bad.append((arc.name, m.name))
+          if bad:
+              print('AC-9 FAIL:', bad); sys.exit(1)
+          print('AC-9 OK')
+          "
+
+      - name: Upload artifacts (ubuntu only — saves space)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pick-face
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-ubuntu-latest
+          path: dist/
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.x"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Publish via Trusted Publishing
+        run: uv publish dist/* --trusted-publishing always
