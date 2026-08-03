@@ -181,3 +181,90 @@ def test_cluster_result_labels_are_compact() -> None:
     if res.n_clusters > 0:
         max_label = int(res.labels.max())
         assert max_label == res.n_clusters - 1
+
+
+# ---------------------------------------------------------------------------
+# incremental_assign (T-101, M2 / docs/04 §3.2)
+# ---------------------------------------------------------------------------
+
+
+def test_incremental_assign_matches_existing_clusters() -> None:
+    """Embeddings close to an existing centroid get that cluster ID."""
+    from pick_face.cluster import incremental_assign
+
+    rng = np.random.default_rng(0)
+    dim = 64  # higher dim → random unit vectors are more orthogonal to axes
+    # 3 cluster anchors at orthogonal unit axes
+    cents = np.eye(3, dim, dtype=np.float32)
+    labels = np.array([10, 20, 30], dtype=np.int32)
+
+    # 5 new faces: 3 close to anchors, 2 noise
+    new = np.zeros((5, dim), dtype=np.float32)
+    new[0] = cents[0] + rng.normal(scale=0.01, size=dim)
+    new[1] = cents[1] + rng.normal(scale=0.01, size=dim)
+    new[2] = cents[2] + rng.normal(scale=0.01, size=dim)
+    # random unit vectors in dim=64 → max abs cosine with axis ≈ 0.4 typically
+    # but we need them below loose_match (0.40). Use anti-aligned + perturb.
+    for i in (3, 4):
+        v = rng.normal(size=dim).astype(np.float32)
+        # push the vector away from every axis
+        for c in cents:
+            v -= 0.7 * (v @ c) * c
+        new[i] = v / np.linalg.norm(v)
+
+    out_labels, out_probs = incremental_assign(
+        new,
+        existing_centroids=cents,
+        existing_labels=labels,
+        strong_match=0.95,
+        loose_match=0.50,
+    )
+    # 3 strong matches, 2 noise
+    assert list(out_labels[:3]) == [10, 20, 30]
+    assert (out_probs[:3] == 1.0).all()
+    assert (out_labels[3:] == -1).all()
+
+
+def test_incremental_assign_empty() -> None:
+    from pick_face.cluster import incremental_assign
+
+    out_labels, out_probs = incremental_assign(
+        np.zeros((0, 16), dtype=np.float32),
+        existing_centroids=np.zeros((0, 16), dtype=np.float32),
+        existing_labels=np.zeros(0, dtype=np.int32),
+        strong_match=0.95,
+        loose_match=0.40,
+    )
+    assert out_labels.shape == (0,)
+    assert out_probs.shape == (0,)
+
+
+def test_incremental_assign_empty_with_real_centroids() -> None:
+    """If there are no new faces but centroids exist, return empty arrays."""
+    from pick_face.cluster import incremental_assign
+
+    cents = np.eye(2, 16, dtype=np.float32)
+    labels = np.array([1, 2], dtype=np.int32)
+    out_labels, out_probs = incremental_assign(
+        np.zeros((0, 16), dtype=np.float32),
+        existing_centroids=cents,
+        existing_labels=labels,
+        strong_match=0.95,
+        loose_match=0.40,
+    )
+    assert out_labels.shape == (0,)
+    assert out_probs.shape == (0,)
+
+
+def test_incremental_assign_no_centroids_marks_all_noise() -> None:
+    from pick_face.cluster import incremental_assign
+
+    new = np.eye(2, 16, dtype=np.float32)
+    out_labels, _ = incremental_assign(
+        new,
+        existing_centroids=np.zeros((0, 16), dtype=np.float32),
+        existing_labels=np.zeros(0, dtype=np.int32),
+        strong_match=0.95,
+        loose_match=0.40,
+    )
+    assert (out_labels == -1).all()

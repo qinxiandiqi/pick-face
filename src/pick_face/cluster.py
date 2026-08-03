@@ -362,3 +362,62 @@ def face_to_cluster_similarity(
         sim = embeddings[idx] @ centroid
         out[idx] = sim.astype(np.float32, copy=False)
     return out
+
+
+def incremental_assign(
+    new_embeddings: np.ndarray,
+    *,
+    existing_centroids: np.ndarray,
+    existing_labels: np.ndarray[int],
+    strong_match: float,
+    loose_match: float,
+) -> tuple[np.ndarray[int], np.ndarray[float]]:
+    """Assign N new face embeddings to the closest existing cluster, or
+    mark them as noise if no cluster is close enough (M2 / docs/04 §3.2).
+
+    Inputs:
+        new_embeddings: (M, 512) L2-normalized float32 — the new faces
+            that need labels. These DO NOT include any faces already in
+            existing_centroids (the function is incremental).
+        existing_centroids: (K, 512) L2-normalized float32 — the centroid
+            of each existing cluster. Centroid 0 corresponds to label
+            `existing_labels[0]`, etc.
+        existing_labels: (K,) int — the cluster IDs in the main DB
+            (1..N). These are NOT 0..K-1; they are real cluster row ids.
+        strong_match: similarity ≥ this puts the face into the cluster
+            unconditionally.
+        loose_match:   similarity ≥ this puts the face into the cluster,
+            but flagged for human review (cluster_prob reflects distance
+            to strong_match). Below this → face stays unassigned (-1).
+
+    Returns:
+        (labels, probs): two (M,) int and float32 arrays. labels[i] is
+            the assigned cluster id (or -1 for unassigned / noise);
+            probs[i] is the *similarity* (not probability) of the
+            assignment so the caller can mark low-confidence faces
+            downstream.
+    """
+    if new_embeddings.size == 0 or existing_centroids.size == 0:
+        m = new_embeddings.shape[0] if new_embeddings.ndim == 2 else 0
+        return (
+            np.full(m, -1, dtype=np.int32),
+            np.zeros(m, dtype=np.float32),
+        )
+
+    embs = l2_normalize(new_embeddings.astype(np.float32, copy=False))
+    cents = l2_normalize(existing_centroids.astype(np.float32, copy=False))
+
+    sims = embs @ cents.T  # (M, K)
+    best = sims.argmax(axis=1)
+    best_sim = sims[np.arange(sims.shape[0]), best]
+
+    labels = np.full(embs.shape[0], -1, dtype=np.int32)
+    probs = np.zeros(embs.shape[0], dtype=np.float32)
+    matched = best_sim >= loose_match
+    labels[matched] = np.asarray(existing_labels)[best[matched]].astype(np.int32)
+    matched_probs = best_sim[matched].astype(np.float32, copy=False)
+    probs[matched] = matched_probs
+    # Strong matches saturate to 1.0; loose matches stay where they are.
+    strong = matched_probs >= strong_match
+    probs[matched] = np.where(strong, 1.0, matched_probs)
+    return labels, probs
