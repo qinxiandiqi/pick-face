@@ -66,6 +66,7 @@ nav:
   - Home: index.md
   - License & compliance:
       - Commercial compliance: 11-commercial-compliance.md
+      - Compatibility promise: 12-compatibility-promise.md
   - Product & planning:
       - Product requirement: 01-product-requirement.md
       - Engineering plan: 06-engineering-plan.md

@@ -65,6 +65,7 @@ The full docs site lives at
 | Document | What it covers |
 |---|---|
 | **[docs/11-commercial-compliance.md](docs/11-commercial-compliance.md)** | **Read first** if shipping for paid use. |
+| **[docs/12-compatibility-promise.md](docs/12-compatibility-promise.md)** | **1.0+ contract**: stable CLI, public Python API, persistence formats, deprecation policy. |
 | [docs/01-product-requirement.md](docs/01-product-requirement.md) | Goals, user stories, acceptance criteria. |
 | [docs/03-architecture-design.md](docs/03-architecture-design.md) | Module layout, CLI contract, exit codes. |
 | [docs/04-algorithm-pipeline.md](docs/04-algorithm-pipeline.md) | Detect → align → embed → cluster pipeline. |

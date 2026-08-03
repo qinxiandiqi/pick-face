@@ -69,6 +69,26 @@ def built_artifacts(tmp_path_factory):
     return whl, sdist
 
 
+def _dist_info_prefix(whl_path: Path) -> str:
+    """Return the wheel's dist-info directory name (e.g. `pick_face-1.0.0.dist-info`).
+
+    Reading the version from the actual built artifact (rather than hardcoding
+    `0.1.0`) means the tests keep working across version bumps.
+    """
+    with zipfile.ZipFile(whl_path) as z:
+        matches = sorted(
+            {
+                n.split("/", 1)[0]
+                for n in z.namelist()
+                if n.endswith(".dist-info") or n.startswith("pick_face-") and ".dist-info/" in n
+            }
+        )
+    candidates = [m for m in matches if m.endswith(".dist-info")]
+    if not candidates:
+        raise AssertionError(f"no .dist-info/ in {whl_path.name}: matched={matches}")
+    return candidates[0]
+
+
 def test_wheel_contains_all_modules(built_artifacts) -> None:
     whl, _ = built_artifacts
     with zipfile.ZipFile(whl) as z:
@@ -76,7 +96,9 @@ def test_wheel_contains_all_modules(built_artifacts) -> None:
     modules_in_wheel = {
         n.removeprefix("pick_face/").removesuffix(".py")
         for n in names
-        if n.startswith("pick_face/") and n.endswith(".py") and "/" not in n.removeprefix("pick_face/")
+        if n.startswith("pick_face/")
+        and n.endswith(".py")
+        and "/" not in n.removeprefix("pick_face/")
     }
     # __init__.py is expected too.
     assert "pick_face/__init__.py" in names
@@ -112,17 +134,19 @@ def test_sdist_includes_docs_and_license(built_artifacts) -> None:
 
 def test_wheel_entry_point(built_artifacts) -> None:
     whl, _ = built_artifacts
+    prefix = _dist_info_prefix(whl)
     with zipfile.ZipFile(whl) as z:
-        ep = z.read("pick_face-0.1.0.dist-info/entry_points.txt").decode("utf-8")
+        ep = z.read(f"{prefix}/entry_points.txt").decode("utf-8")
     assert "pick-face = pick_face.cli:main" in ep
 
 
 def test_wheel_license_present(built_artifacts) -> None:
     whl, _ = built_artifacts
+    prefix = _dist_info_prefix(whl)
     with zipfile.ZipFile(whl) as z:
         names = z.namelist()
-    assert any(n.startswith("pick_face-0.1.0.dist-info/licenses/") for n in names), (
-        "License must be included in dist-info/licenses/ per PEP 639"
+    assert any(n.startswith(f"{prefix}/licenses/") for n in names), (
+        f"License must be included under {prefix}/licenses/ per PEP 639"
     )
 
 
@@ -144,8 +168,9 @@ def test_installed_package_metadata_is_consistent() -> None:
 def test_wheel_is_python_3_pure(built_artifacts) -> None:
     """Pick-face is pure Python — wheel tag must be py3-none-any."""
     whl, _ = built_artifacts
+    prefix = _dist_info_prefix(whl)
     with zipfile.ZipFile(whl) as z:
-        wheel = z.read("pick_face-0.1.0.dist-info/WHEEL").decode("utf-8")
+        wheel = z.read(f"{prefix}/WHEEL").decode("utf-8")
     assert "py3-none-any" in wheel, f"expected py3-none-any wheel, got:\n{wheel}"
 
 
