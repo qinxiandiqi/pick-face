@@ -38,12 +38,22 @@ class LinkResult:
     link_path: Path
     target: Path
     kind: str        # "symlink" | "hardlink" | "junction" | "copy"
+    # The kind the caller asked for via `prefer=...`. If the actual
+    # kind differs, callers can surface a "fell back to copy" warning
+    # to the user (T-107). None means no preference (just "anything").
+    prefer: str | None = None
 
     def target_resolved(self) -> Path:
         if self.kind == "copy":
             return self.target
         # symlink/hardlink/junction: target is the source
         return self.target
+
+    def degraded(self) -> bool:
+        """True iff we ended up using a different kind than the caller asked
+        for. The caller should surface this as a warning so the user
+        knows disk usage may be higher than expected (T-107)."""
+        return self.prefer is not None and self.kind != self.prefer
 
 
 def link_or_copy(src: Path, dst: Path, *, prefer: str = "symlink") -> LinkResult:
@@ -78,7 +88,7 @@ def link_or_copy(src: Path, dst: Path, *, prefer: str = "symlink") -> LinkResult
     for kind in attempts:
         try:
             _do_link(kind, src, dst)
-            return LinkResult(link_path=dst, target=src, kind=kind)
+            return LinkResult(link_path=dst, target=src, kind=kind, prefer=prefer)
         except (OSError, subprocess.SubprocessError) as e:
             last_err = e if isinstance(e, OSError) else OSError(str(e))
             continue

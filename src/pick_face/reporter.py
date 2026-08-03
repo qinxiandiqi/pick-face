@@ -36,6 +36,11 @@ class ReportStats:
     avg_face_to_cluster: float
     cluster_id_min: int
     cluster_id_max: int
+    symlink_links: int = 0
+    hardlink_links: int = 0
+    junction_links: int = 0
+    copy_links: int = 0
+    link_errors: int = 0
 
 
 def collect_stats(conn: sqlite3.Connection) -> ReportStats:
@@ -58,6 +63,16 @@ def collect_stats(conn: sqlite3.Connection) -> ReportStats:
         "SELECT AVG(mean_sim) FROM cluster WHERE mean_sim IS NOT NULL AND merged_into IS NULL"
     ).fetchone()[0]
     avg_sim = float(avg) if avg is not None else 0.0
+
+    # Link-kind histogram (T-107): lets the report flag copy-fallback as
+    # a warning when the user asked for symlink and we ended up copying.
+    link_counts = {"symlink": 0, "hardlink": 0, "junction": 0, "copy": 0}
+    for r in conn.execute(
+        "SELECT link_kind, COUNT(*) AS c FROM link GROUP BY link_kind"
+    ).fetchall():
+        kind = str(r["link_kind"])
+        link_counts[kind] = int(r["c"]) if kind in link_counts else 0
+
     return ReportStats(
         total_sources=int(row["total_sources"] or 0),
         active_sources=int(row["active_sources"] or 0),
@@ -69,6 +84,10 @@ def collect_stats(conn: sqlite3.Connection) -> ReportStats:
         avg_face_to_cluster=avg_sim,
         cluster_id_min=int(row["cluster_id_min"] or 0),
         cluster_id_max=int(row["cluster_id_max"] or 0),
+        symlink_links=link_counts["symlink"],
+        hardlink_links=link_counts["hardlink"],
+        junction_links=link_counts["junction"],
+        copy_links=link_counts["copy"],
     )
 
 
@@ -121,6 +140,13 @@ def render_markdown(
     lines.append(f"- **Persons**: {stats.persons}")
     lines.append(f"- **Cluster ID range**: {stats.cluster_id_min}..{stats.cluster_id_max}")
     lines.append(f"- **Avg face-to-centroid similarity**: {stats.avg_face_to_cluster:.3f}")
+    total_links = (
+        stats.symlink_links + stats.hardlink_links + stats.junction_links + stats.copy_links
+    )
+    if total_links > 0:
+        lines.append(f"- **Link kinds**: symlink={stats.symlink_links}, "
+                     f"hardlink={stats.hardlink_links}, junction={stats.junction_links}, "
+                     f"copy={stats.copy_links}")
     lines.append("")
     lines.append("## Review candidates")
     lines.append("")
@@ -233,8 +259,10 @@ def write_report(
     ).fetchall()
     person_legend = [(int(r["id"]), str(r["label"]), int(r["size"])) for r in legend_rows]
 
+    link_cfg = config_dict.get("link", {})
+    prefer = link_cfg.get("prefer", "symlink")
     runtime_cfg = config_dict.get("runtime", {})
-    warnings = _warnings_for(runtime_cfg, stats)
+    warnings = _warnings_for(runtime_cfg, stats, prefer=prefer)
     ack_summary = _license_ack_line(config_dict)
 
     if fmt == "md":
@@ -384,8 +412,13 @@ def write_low_confidence_json(
     return target
 
 
-def _warnings_for(runtime_cfg: dict, stats: ReportStats) -> tuple[str, ...]:
-    """Compute the ⚠ Warnings list (docs/05 §6 + docs/11 §3.4)."""
+def _warnings_for(
+    runtime_cfg: dict,
+    stats: ReportStats,
+    *,
+    prefer: str = "symlink",
+) -> tuple[str, ...]:
+    """Compute the ⚠ Warnings list (docs/05 §6 + docs/11 §3.4 + T-107)."""
     out: list[str] = []
     name = runtime_cfg.get("model_name", "buffalo_l")
     accepted = bool(runtime_cfg.get("accept_noncommercial_model_license", False))
@@ -404,4 +437,23 @@ def _warnings_for(runtime_cfg: dict, stats: ReportStats) -> tuple[str, ...]:
             f"{stats.missing_sources} source(s) disappeared since the last scan; "
             "their cluster membership is preserved but they're flagged `missing`."
         )
+
+    # T-107: link-fallback warning. If the user asked for symlink/junction
+    # but the linker ended up writing more copies than preferred kinds,
+    # the OS is rejecting symbolic links (Windows non-admin, no developer
+    # mode). Surface this so the user knows disk usage will be higher.
+    actual_total = (
+        stats.symlink_links + stats.hardlink_links + stats.junction_links + stats.copy_links
+    )
+    if actual_total > 0 and prefer in ("symlink", "junction") and stats.copy_links > 0:
+        non_preferred = stats.copy_links
+        if non_preferred / actual_total > 0.05:
+            # Only warn when ≥5% fell back — a few stragglers are normal
+            # on cross-volume layouts.
+            out.append(
+                f"{non_preferred}/{actual_total} links fell back to copy instead of "
+                f"{prefer!r}. On Windows this usually means Developer Mode is off "
+                "or you're running unelevated. See docs/troubleshooting.md."
+            )
+
     return tuple(out)

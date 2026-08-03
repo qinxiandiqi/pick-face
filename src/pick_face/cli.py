@@ -630,6 +630,7 @@ def link(
         work_out = out
 
     counts = {"symlink": 0, "hardlink": 0, "junction": 0, "copy": 0, "errors": 0}
+    fallbacks: list[str] = []
     for r in rows:
         cluster_label = r["cluster_label"]
         src = Path(r["src_path"])
@@ -638,6 +639,11 @@ def link(
         try:
             result = link_or_copy(src, dst, prefer=prefer)
             counts[result.kind] += 1
+            if result.degraded() and (counts["copy"] == 1 or len(fallbacks) < 5):
+                # Only surface a handful — the report aggregates the totals.
+                fallbacks.append(
+                    f"{src.name}: requested {prefer!r} → fell back to {result.kind!r}"
+                )
         except OSError as e:
             counts["errors"] += 1
             console.print(f"[red]link fail:[/red] {src} → {dst}: {e}")
@@ -656,6 +662,13 @@ def link(
     console.print(f"[bold]link[/bold]  {summary or 'no work'}")
     if atomic:
         console.print(f"  staged atomic swap; run_id={run_id}")
+    if fallbacks:
+        console.print(
+            f"[yellow]⚠ {len(fallbacks)} link(s) fell back from {prefer!r} "
+            f"to a slower mode. See report.md 'Warnings'.[/yellow]"
+        )
+        for line in fallbacks[:5]:
+            console.print(f"  • {line}")
 
 
 # ---------------------------------------------------------------------------
