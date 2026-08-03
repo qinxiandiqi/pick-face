@@ -21,7 +21,6 @@ from pathlib import Path
 
 from pick_face.config import INSIGHTFACE_MODELS, PickFaceConfig
 
-
 LICENSE_NOTICE = """\
 ═══════════════════════════════════════════════════════════════════════
   InsightFace buffalo_l — License Notice
@@ -95,7 +94,9 @@ def write_license_ack(model_dir: Path, model_name: str, *, acked_by: str | None 
         "ack_text": license_notice_for(model_name),
         "acked_at": datetime.now(tz=timezone.utc).isoformat(),
         "acked_by": acked_by or _best_user(),
-        "host": os.uname().nodename if hasattr(os, "uname") else os.environ.get("COMPUTERNAME", "?"),
+        "host": os.uname().nodename
+        if hasattr(os, "uname")
+        else os.environ.get("COMPUTERNAME", "?"),
     }
     target.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return target

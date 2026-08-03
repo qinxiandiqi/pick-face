@@ -9,10 +9,10 @@ Reference:
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 from typing import Literal
 
+import tomllib
 from pydantic import BaseModel, Field, field_validator
 
 # InsightFace `buffalo_*` weight pack names (non-commercial-research licensed).

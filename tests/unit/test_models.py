@@ -65,13 +65,10 @@ def test_read_license_ack_missing_returns_none(tmp_pure: Path) -> None:
 
 
 def test_license_ack_summary_includes_user(tmp_pure: Path) -> None:
-    cfg = PickFaceConfig(runtime={"model_name": "buffalo_l"})
     # Redirect model_dir via env won't expand: easier to write manually.
     model_dir = tmp_pure / "models" / "buffalo_l"
     write_license_ack(model_dir, "buffalo_l", acked_by="alice")
-    cfg2 = PickFaceConfig(
-        runtime={"model_name": "buffalo_l", "model_dir": tmp_pure / "models"}
-    )
+    cfg2 = PickFaceConfig(runtime={"model_name": "buffalo_l", "model_dir": tmp_pure / "models"})
     s = license_ack_summary(cfg2)
     assert s is not None
     assert "alice" in s

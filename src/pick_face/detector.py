@@ -21,11 +21,11 @@ import numpy as np
 class Detection:
     """One detected face, plus the aligned chip ready for embedding."""
 
-    bbox: tuple[float, float, float, float]   # (x1, y1, x2, y2) in image pixels
-    det_score: float                           # 0..1, post det_thresh
-    landmarks: np.ndarray                      # (5, 2) float32: eye-L, eye-R, nose, mouth-L, mouth-R
-    chip: np.ndarray                           # (112, 112, 3) RGB uint8 — the aligned face
-    quality: float = 0.0                       # optional sharpness/blur score (0..1)
+    bbox: tuple[float, float, float, float]  # (x1, y1, x2, y2) in image pixels
+    det_score: float  # 0..1, post det_thresh
+    landmarks: np.ndarray  # (5, 2) float32: eye-L, eye-R, nose, mouth-L, mouth-R
+    chip: np.ndarray  # (112, 112, 3) RGB uint8 — the aligned face
+    quality: float = 0.0  # optional sharpness/blur score (0..1)
 
 
 @runtime_checkable
@@ -48,7 +48,7 @@ class Detector(Protocol):
 class Aligner(Protocol):
     """Pure-geometry step: 5 landmarks + reference → 112x112 RGB chip."""
 
-    ref_landmarks: np.ndarray                  # (5, 2) ArcFace template
+    ref_landmarks: np.ndarray  # (5, 2) ArcFace template
 
     def warp(self, bgr: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
         """Return the 112x112 RGB uint8 chip aligned to *ref_landmarks*."""
@@ -59,7 +59,7 @@ class Aligner(Protocol):
 class Embedder(Protocol):
     """Map a 112x112 RGB chip → 512-D L2-normalized embedding."""
 
-    dim: int                                   # 512 for ArcFace w600k_r50
+    dim: int  # 512 for ArcFace w600k_r50
     model_version: str
 
     def embed(self, chip_rgb: np.ndarray) -> np.ndarray:
@@ -73,10 +73,10 @@ def detection_from_insightface(face: object, chip: np.ndarray) -> Detection:
     Lives here (not in the insightface impl module) so unit tests can use it
     with mock faces without importing onnxruntime.
     """
-    bbox = tuple(map(float, face.bbox))        # type: ignore[attr-defined]
+    bbox = tuple(map(float, face.bbox))  # type: ignore[attr-defined]
     return Detection(
-        bbox=bbox,                              # type: ignore[arg-type]
-        det_score=float(face.det_score),         # type: ignore[attr-defined]
+        bbox=bbox,  # type: ignore[arg-type]
+        det_score=float(face.det_score),  # type: ignore[attr-defined]
         landmarks=np.asarray(face.kps, dtype=np.float32),  # type: ignore[attr-defined]
         chip=chip,
         quality=_rough_quality(chip),
@@ -92,6 +92,7 @@ def _rough_quality(chip: np.ndarray) -> float:
     just enough to separate "blurry" from "obviously sharp".
     """
     import cv2
+
     if chip.ndim == 3:
         gray = cv2.cvtColor(chip, cv2.COLOR_RGB2GRAY)
     else:
@@ -99,6 +100,7 @@ def _rough_quality(chip: np.ndarray) -> float:
     lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
     # 100 ≈ sharp; 5 ≈ very blurry. Soft-knee squash keeps it bounded.
     import math
+
     if lap_var <= 0:
         return 0.0
     score = 1.0 - math.exp(-lap_var / 100.0)
@@ -109,6 +111,7 @@ def chip_path_for(detection_id: int, out_dir: Path | None = None) -> Path:
     """Stable cache path for saving aligned chips to disk (used by debug)."""
     if out_dir is None:
         from pick_face.paths import cache_dir
+
         out_dir = cache_dir() / "chips"
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir / f"{detection_id:08d}.jpg"

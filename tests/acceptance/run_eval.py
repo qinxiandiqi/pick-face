@@ -140,13 +140,14 @@ def _pairwise_metrics(
         sizes = defaultdict(int)
         for m in members:
             sizes[m] += 1
-        b3_r_list.append(sum(s * (s - 1) / 2 for s in sizes.values()) /
-                         (len(members) * (len(members) - 1) / 2))
+        b3_r_list.append(
+            sum(s * (s - 1) / 2 for s in sizes.values()) / (len(members) * (len(members) - 1) / 2)
+        )
     b3_p = sum(b3_p_list) / len(b3_p_list) if b3_p_list else 0.0
     b3_r = sum(b3_r_list) / len(b3_r_list) if b3_r_list else 0.0
     b3_f1 = 2 * b3_p * b3_r / (b3_p + b3_r) if (b3_p + b3_r) else 0.0
 
-    return pp, pr, b3_f1, len(pairs), len(same_cluster), len(set(p[2] for p in pairs))
+    return pp, pr, b3_f1, len(pairs), len(same_cluster), len({p[2] for p in pairs})
 
 
 def run_eval(db: Path, truth: dict[str, str] | None, out: Path) -> EvalResult:

@@ -29,8 +29,8 @@ class DecodedImage:
     """One decoded source image, post EXIF-rotation, post downsample."""
 
     path: Path
-    bgr: np.ndarray            # (H, W, 3) uint8 contiguous — detector input
-    pil_rgb_size: tuple[int, int]   # (W, H) — for thumb width=160
+    bgr: np.ndarray  # (H, W, 3) uint8 contiguous — detector input
+    pil_rgb_size: tuple[int, int]  # (W, H) — for thumb width=160
     original_size: tuple[int, int]  # (W, H) before downsample
 
 
@@ -81,7 +81,7 @@ def _open_with_pillow(path: Path):
     Returns None if the format is recognised as HEIC/RAW but the matching
     extra is not installed. Raises whatever Pillow raises for corrupt JPG/PNG.
     """
-    from PIL import Image, ImageOps
+    from PIL import Image
 
     suffix = path.suffix.lower()
     if suffix in {".heic", ".heif"}:

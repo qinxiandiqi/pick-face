@@ -14,7 +14,7 @@ import pytest
 
 from pick_face.config import PickFaceConfig
 from pick_face.errors import CommercialLicenseError, ModelLoadError, ModelNotFoundError
-from pick_face.runtime import check_commercial, load_insightface_runner
+from pick_face.runtime import load_insightface_runner
 
 
 def test_load_runner_fails_compliance_first(tmp_pure: Path) -> None:
@@ -50,6 +50,7 @@ def test_load_runner_fails_when_insightface_missing(tmp_pure: Path, monkeypatch)
 
     # Simulate the import failing
     import builtins
+
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):

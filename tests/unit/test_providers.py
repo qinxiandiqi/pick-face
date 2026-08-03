@@ -95,6 +95,7 @@ def test_probe_providers_always_ends_with_cpu(monkeypatch) -> None:
 
     monkeypatch.setattr(ort, "get_available_providers", lambda: ["CPUExecutionProvider"])
     from pick_face.runtime import _probe_providers
+
     chain = _probe_providers()
     assert chain[-1] == "CPUExecutionProvider"
 
@@ -109,6 +110,7 @@ def test_probe_providers_cuda_first(monkeypatch) -> None:
         lambda: ["CPUExecutionProvider", "CUDAExecutionProvider", "DmlExecutionProvider"],
     )
     from pick_face.runtime import _probe_providers
+
     chain = _probe_providers()
     assert chain[0] == "CUDAExecutionProvider"
     assert "DmlExecutionProvider" in chain
@@ -129,6 +131,7 @@ def test_probe_providers_tensorrt_promoted_after_cuda(monkeypatch) -> None:
         ],
     )
     from pick_face.runtime import _probe_providers
+
     chain = _probe_providers()
     cuda_idx = chain.index("CUDAExecutionProvider")
     trt_idx = chain.index("TensorrtExecutionProvider")

@@ -26,7 +26,6 @@ moves to docs/04 §2.4's top-k nearest-neighbour construct in M3.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 
@@ -36,8 +35,8 @@ from pick_face.embedder import cosine_distance_matrix, l2_normalize
 
 @dataclass(frozen=True)
 class ClusterResult:
-    labels: np.ndarray     # (N,) int32, cluster IDs in [0, K). -1 == noise.
-    probs: np.ndarray      # (N,) float32, HDBSCAN cluster_probability
+    labels: np.ndarray  # (N,) int32, cluster IDs in [0, K). -1 == noise.
+    probs: np.ndarray  # (N,) float32, HDBSCAN cluster_probability
     n_clusters: int
     n_noise: int
 
@@ -46,7 +45,7 @@ class ClusterResult:
 class Constraint:
     face_a: int
     face_b: int
-    kind: str              # "must_link" or "cannot_link"
+    kind: str  # "must_link" or "cannot_link"
 
 
 @dataclass(frozen=True)
@@ -106,7 +105,9 @@ def cluster_embeddings(
 
     # 2. Centroid 2-pass merge over the surviving (>=0) initial labels.
     merged_labels = _centroid_merge(
-        embeddings, raw_labels, merge_threshold=cfg.merge_threshold,
+        embeddings,
+        raw_labels,
+        merge_threshold=cfg.merge_threshold,
     )
 
     # 3. Apply review constraints. must_link unions; cannot_link splits.
@@ -153,10 +154,10 @@ def _hdbscan_fit(
             "`uv pip install 'pick-face[dev]'` or `uv pip install hdbscan`."
         ) from e
 
-    D = cosine_distance_matrix(embeddings)
+    dists = cosine_distance_matrix(embeddings)
     # HDBSCAN expects double precision for its precomputed distances.
-    D = D.astype(np.float64, copy=False)
-    np.fill_diagonal(D, 0.0)
+    dists = dists.astype(np.float64, copy=False)
+    np.fill_diagonal(dists, 0.0)
     clusterer = hdbscan.HDBSCAN(
         metric="precomputed",
         min_cluster_size=min_cluster_size,
@@ -164,7 +165,7 @@ def _hdbscan_fit(
         cluster_selection_method="leaf",
         cluster_selection_epsilon=0.0,
     )
-    clusterer.fit(D)
+    clusterer.fit(dists)
     labels = np.asarray(clusterer.labels_, dtype=np.int32)
     probs = np.asarray(clusterer.probabilities_, dtype=np.float32)
     return labels, probs
@@ -222,10 +223,10 @@ def _centroid_merge(
     for _ in range(10):
         centroids: dict[int, np.ndarray] = {}
         members: dict[int, list[int]] = {}
-        for i, l in enumerate(lbl):
-            if l == -1:
+        for i, lbl_val in enumerate(lbl):
+            if lbl_val == -1:
                 continue
-            root = find(int(l))
+            root = find(int(lbl_val))
             members.setdefault(root, []).append(i)
         for root, idxs in members.items():
             if len(idxs) == 1:
@@ -240,8 +241,8 @@ def _centroid_merge(
             break
         merged_any = False
         # vectorised pairwise sim
-        C = np.stack([centroids[i] for i in ids], axis=0)
-        sim = C @ C.T
+        centroid_mat = np.stack([centroids[i] for i in ids], axis=0)
+        sim = centroid_mat @ centroid_mat.T
         # We need an identity-friendly iteration that respects the small
         # cluster count: O(K^2) is fine because K << N.
         for i in range(len(ids)):
@@ -293,7 +294,12 @@ def _apply_constraints(
 
     for c in constraints:
         if c.kind == "must_link":
-            if 0 <= c.face_a < n and 0 <= c.face_b < n and lbl[c.face_a] != -1 and lbl[c.face_b] != -1:
+            if (
+                0 <= c.face_a < n
+                and 0 <= c.face_b < n
+                and lbl[c.face_a] != -1
+                and lbl[c.face_b] != -1
+            ):
                 union(int(lbl[c.face_a]), int(lbl[c.face_b]))
         elif c.kind == "cannot_link":
             # If both faces ended up in the same cluster, peel face_b into
@@ -321,10 +327,10 @@ def _renumber(labels: np.ndarray) -> tuple[np.ndarray, int]:
     out = np.full_like(labels, -1)
     next_id = 0
     seen: dict[int, int] = {}
-    for i, l in enumerate(labels):
-        if l == -1:
+    for i, lbl_val in enumerate(labels):
+        if lbl_val == -1:
             continue
-        il = int(l)
+        il = int(lbl_val)
         if il not in seen:
             seen[il] = next_id
             next_id += 1

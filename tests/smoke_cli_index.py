@@ -39,10 +39,10 @@ def main() -> int:
 
     cfg = out / "pick-face.toml"
     cfg.write_text(
-        '[runtime]\n'
+        "[runtime]\n"
         'model_name = "buffalo_l"\n'
         'model_dir = "~/.insightface/models"\n'
-        'accept_noncommercial_model_license = false\n'
+        "accept_noncommercial_model_license = false\n"
         'provider = "cpu"\n',
         encoding="utf-8",
     )
@@ -67,8 +67,20 @@ def main() -> int:
         return r.returncode
 
     # 2) index with default (commercial-unsafe) config → exit code 2.
-    r = run(["uv", "run", "pick-face", "index",
-             "--config", str(cfg), "--out", str(out), "--provider", "cpu"])
+    r = run(
+        [
+            "uv",
+            "run",
+            "pick-face",
+            "index",
+            "--config",
+            str(cfg),
+            "--out",
+            str(out),
+            "--provider",
+            "cpu",
+        ]
+    )
     if r.returncode != 2:
         print(f"FAIL: expected rc=2 (compliance), got rc={r.returncode}", file=sys.stderr)
         return 1
@@ -80,12 +92,27 @@ def main() -> int:
     # 3) Now acknowledge the license in a temp config. Model pack won't exist
     #    on disk → expect ModelNotFoundError → rc=3.
     cfg_acked = out / "acked.toml"
-    cfg_acked.write_text(cfg.read_text(encoding="utf-8").replace(
-        "accept_noncommercial_model_license = false",
-        "accept_noncommercial_model_license = true",
-    ), encoding="utf-8")
-    r = run(["uv", "run", "pick-face", "index",
-             "--config", str(cfg_acked), "--out", str(out), "--provider", "cpu"])
+    cfg_acked.write_text(
+        cfg.read_text(encoding="utf-8").replace(
+            "accept_noncommercial_model_license = false",
+            "accept_noncommercial_model_license = true",
+        ),
+        encoding="utf-8",
+    )
+    r = run(
+        [
+            "uv",
+            "run",
+            "pick-face",
+            "index",
+            "--config",
+            str(cfg_acked),
+            "--out",
+            str(out),
+            "--provider",
+            "cpu",
+        ]
+    )
     # ModelLoadError (missing onnx) or ModelNotFoundError both exit code 3
     if r.returncode != 3:
         print(f"FAIL: expected rc=3 (model missing), got rc={r.returncode}", file=sys.stderr)

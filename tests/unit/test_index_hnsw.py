@@ -20,8 +20,8 @@ import pytest
 from pick_face.index_hnsw import (
     BACKEND_HNSWLIB,
     BACKEND_NUMPY,
-    HnswIndex,
     MAGIC,
+    HnswIndex,
     rebuild,
 )
 
@@ -146,6 +146,7 @@ def test_load_backend_mismatch_raises(tmp_pure: Path) -> None:
 def _hnswlib_present() -> bool:
     try:
         import hnswlib  # noqa: F401
+
         return True
     except ImportError:
         return False

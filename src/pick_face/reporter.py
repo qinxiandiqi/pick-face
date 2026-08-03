@@ -144,9 +144,11 @@ def render_markdown(
         stats.symlink_links + stats.hardlink_links + stats.junction_links + stats.copy_links
     )
     if total_links > 0:
-        lines.append(f"- **Link kinds**: symlink={stats.symlink_links}, "
-                     f"hardlink={stats.hardlink_links}, junction={stats.junction_links}, "
-                     f"copy={stats.copy_links}")
+        lines.append(
+            f"- **Link kinds**: symlink={stats.symlink_links}, "
+            f"hardlink={stats.hardlink_links}, junction={stats.junction_links}, "
+            f"copy={stats.copy_links}"
+        )
     lines.append("")
     lines.append("## Review candidates")
     lines.append("")
@@ -230,8 +232,7 @@ def render_json(
         },
         "stats": stats.__dict__,
         "persons": [
-            {"id": cid, "label": label, "size": size}
-            for cid, label, size in person_legend
+            {"id": cid, "label": label, "size": size} for cid, label, size in person_legend
         ],
         "warnings": list(warnings),
     }
@@ -271,10 +272,9 @@ def render_html(
 
     # Person legend rows.
     person_rows = []
-    for cid, label, size in person_legend:
+    for _cid, label, size in person_legend:
         person_rows.append(
-            f'<li><a href="./{label}/">{label}</a> '
-            f'<span class="size">({size} faces)</span></li>'
+            f'<li><a href="./{label}/">{label}</a> <span class="size">({size} faces)</span></li>'
         )
     person_list = (
         f'<ul class="persons">{"".join(person_rows)}</ul>'
@@ -282,22 +282,22 @@ def render_html(
         else '<p class="empty">(no persons yet — run <code>pick-face cluster</code>)</p>'
     )
 
-    warning_items = (
-        "".join(f"<li>{w}</li>" for w in warnings) if warnings else ""
-    )
+    warning_items = "".join(f"<li>{w}</li>" for w in warnings) if warnings else ""
     warnings_block = (
         f'<section class="warnings"><h2>⚠ Warnings</h2><ul>{warning_items}</ul></section>'
-        if warning_items else ""
+        if warning_items
+        else ""
     )
 
     total_links = (
         stats.symlink_links + stats.hardlink_links + stats.junction_links + stats.copy_links
     )
     links_line = (
-        f'<li><strong>Link kinds</strong>: symlink={stats.symlink_links}, '
-        f'hardlink={stats.hardlink_links}, junction={stats.junction_links}, '
-        f'copy={stats.copy_links}</li>'
-        if total_links > 0 else ""
+        f"<li><strong>Link kinds</strong>: symlink={stats.symlink_links}, "
+        f"hardlink={stats.hardlink_links}, junction={stats.junction_links}, "
+        f"copy={stats.copy_links}</li>"
+        if total_links > 0
+        else ""
     )
 
     ack_line = f"<li><strong>Accepted by</strong>: {ack_summary}</li>" if ack_summary else ""
@@ -353,10 +353,14 @@ code {{ background: var(--panel); padding: 0.1rem 0.4rem; border-radius: 4px; fo
   <ul>
     <li><strong>Run ID</strong>: <code>{rid}</code></li>
     <li><strong>Generated</strong>: <code>{datetime.now(tz=timezone.utc).isoformat()}</code></li>
-    <li><strong>Model</strong>: <code>{model_name}</code> (SCRFD-10G detector + ArcFace w600k_r50 embedder)</li>
+    <li><strong>Model</strong>: <code>{
+        model_name
+    }</code> (SCRFD-10G detector + ArcFace w600k_r50 embedder)</li>
     <li><strong>Model dir</strong>: <code>{model_dir}</code></li>
     <li><strong>Model License</strong>: {license_label}</li>
-    <li><strong>License Accepted</strong>: {'yes' if accepted else 'no (commercial users must self-train, see docs/11)'}</li>
+    <li><strong>License Accepted</strong>: {
+        "yes" if accepted else "no (commercial users must self-train, see docs/11)"
+    }</li>
     {ack_line}
     <li><strong>Provider</strong>: <code>{provider}</code></li>
   </ul>
@@ -392,10 +396,12 @@ code {{ background: var(--panel); padding: 0.1rem 0.4rem; border-radius: 4px; fo
     descriptor.
   </p>
   <div class="wall">
-    {''.join(
-        f'<div class="card"><a href="./{label}/">{label}</a><div class="meta">{size} faces</div></div>'
-        for cid, label, size in person_legend
-    )}
+    {
+        "".join(
+            f'<div class="card"><a href="./{label}/">{label}</a><div class="meta">{size} faces</div></div>'
+            for cid, label, size in person_legend
+        )
+    }
   </div>
 </section>
 
@@ -450,22 +456,31 @@ def write_report(
 
     if fmt == "md":
         body = render_markdown(
-            stats, config_dict=config_dict, run_id=run_id,
-            warnings=warnings, person_legend=person_legend,
+            stats,
+            config_dict=config_dict,
+            run_id=run_id,
+            warnings=warnings,
+            person_legend=person_legend,
             ack_summary=ack_summary,
         )
         target = out_dir / "report.md"
     elif fmt == "json":
         body = render_json(
-            stats, config_dict=config_dict, run_id=run_id,
-            warnings=warnings, person_legend=person_legend,
+            stats,
+            config_dict=config_dict,
+            run_id=run_id,
+            warnings=warnings,
+            person_legend=person_legend,
             ack_summary=ack_summary,
         )
         target = out_dir / "report.json"
     elif fmt == "html":
         body = render_html(
-            stats, config_dict=config_dict, run_id=run_id,
-            warnings=warnings, person_legend=person_legend,
+            stats,
+            config_dict=config_dict,
+            run_id=run_id,
+            warnings=warnings,
+            person_legend=person_legend,
             ack_summary=ack_summary,
         )
         target = out_dir / "report.html"
@@ -485,8 +500,8 @@ def _license_ack_line(config_dict: dict) -> str | None:
     the runtime models module.
     """
     try:
-        from pick_face.models import license_ack_summary
         from pick_face.config import PickFaceConfig
+        from pick_face.models import license_ack_summary
 
         cfg = PickFaceConfig.model_validate(config_dict)
         return license_ack_summary(cfg)
@@ -541,16 +556,18 @@ def collect_low_confidence_faces(
     )
     out: list[dict] = []
     for r in cur.fetchall():
-        out.append({
-            "face_id": int(r["face_id"]),
-            "cluster_id": int(r["cluster_id"]),
-            "cluster_label": str(r["cluster_label"]),
-            "similarity": round(float(r["similarity"]), 4),
-            "source_id": int(r["source_id"]),
-            "source_path": str(r["source_path"]),
-            "rel_path": str(r["rel_path"]),
-            "review_state": str(r["review_state"]),
-        })
+        out.append(
+            {
+                "face_id": int(r["face_id"]),
+                "cluster_id": int(r["cluster_id"]),
+                "cluster_label": str(r["cluster_label"]),
+                "similarity": round(float(r["similarity"]), 4),
+                "source_id": int(r["source_id"]),
+                "source_path": str(r["source_path"]),
+                "rel_path": str(r["rel_path"]),
+                "review_state": str(r["review_state"]),
+            }
+        )
     return out
 
 

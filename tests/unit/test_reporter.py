@@ -15,7 +15,7 @@ import pytest
 
 from pick_face.config import PickFaceConfig
 from pick_face.index import open_db
-from pick_face.reporter import collect_stats, render_markdown, render_json, write_report
+from pick_face.reporter import collect_stats, render_json, render_markdown, write_report
 
 
 @pytest.fixture()
@@ -41,7 +41,7 @@ def populated_db(tmp_pure: Path):
     for i in range(2):
         cur = conn.execute(
             "INSERT INTO cluster(label, size, mean_sim, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (f"person-{i+1:04d}", 0, 0.7, now, now),
+            (f"person-{i + 1:04d}", 0, 0.7, now, now),
         )
         clusters.append(int(cur.lastrowid))
 
@@ -164,8 +164,9 @@ def test_write_report_json_renders_to_json(populated_db, tmp_pure: Path) -> None
 
 def test_write_report_rejects_unknown_fmt(populated_db, tmp_pure: Path) -> None:
     with pytest.raises(ValueError):
-        write_report(populated_db, out_dir=tmp_pure,
-                     config_dict=_config_dict(PickFaceConfig()), fmt="xml")
+        write_report(
+            populated_db, out_dir=tmp_pure, config_dict=_config_dict(PickFaceConfig()), fmt="xml"
+        )
 
 
 def test_warnings_for_acknowledged_compliance(populated_db) -> None:
@@ -178,7 +179,9 @@ def test_warnings_for_acknowledged_compliance(populated_db) -> None:
     assert not any("non-commercial-research" in m for m in msgs)
 
 
-def test_render_markdown_includes_accepted_by_when_ack_present(populated_db, tmp_pure: Path) -> None:
+def test_render_markdown_includes_accepted_by_when_ack_present(
+    populated_db, tmp_pure: Path
+) -> None:
     from pick_face.models import write_license_ack
 
     model_dir = tmp_pure / "models" / "buffalo_l"
@@ -193,7 +196,7 @@ def test_render_markdown_includes_accepted_by_when_ack_present(populated_db, tmp
     body = render_markdown(
         collect_stats(populated_db),
         config_dict=_config_dict(cfg),
-        ack_summary=f'user "alice" on 2026-07-30 (see `.cache/buffalo_l/.license_ack`)',
+        ack_summary='user "alice" on 2026-07-30 (see `.cache/buffalo_l/.license_ack`)',
     )
     assert "**Accepted by**" in body
     assert "alice" in body
@@ -221,5 +224,6 @@ def _config_dict(cfg: PickFaceConfig) -> dict:
     'model_dir' is JSON-safe (Path → str). The reporter runs from JSON-able
     config to keep markdown output serializable."""
     import json as _json
+
     raw = cfg.model_dump(mode="json")
     return _json.loads(_json.dumps(raw))

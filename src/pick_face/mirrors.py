@@ -21,7 +21,6 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 META_SCHEMA = "pick-face/meta@1"
 INDEX_SCHEMA = "pick-face/index@1"
 
@@ -135,17 +134,17 @@ def write_index_json(conn: sqlite3.Connection, out_dir: Path, *, run_id: str | N
 
     totals = {
         "clusters": int(conn.execute("SELECT COUNT(*) FROM cluster").fetchone()[0]),
-        "persons": int(conn.execute(
-            "SELECT COUNT(*) FROM cluster WHERE merged_into IS NULL"
-        ).fetchone()[0]),
+        "persons": int(
+            conn.execute("SELECT COUNT(*) FROM cluster WHERE merged_into IS NULL").fetchone()[0]
+        ),
         "links": int(conn.execute("SELECT COUNT(*) FROM link").fetchone()[0]),
         "faces": int(conn.execute("SELECT COUNT(*) FROM face").fetchone()[0]),
-        "active_sources": int(conn.execute(
-            "SELECT COUNT(*) FROM source WHERE status = 'active'"
-        ).fetchone()[0]),
-        "missing_sources": int(conn.execute(
-            "SELECT COUNT(*) FROM source WHERE status = 'missing'"
-        ).fetchone()[0]),
+        "active_sources": int(
+            conn.execute("SELECT COUNT(*) FROM source WHERE status = 'active'").fetchone()[0]
+        ),
+        "missing_sources": int(
+            conn.execute("SELECT COUNT(*) FROM source WHERE status = 'missing'").fetchone()[0]
+        ),
     }
 
     payload = {
@@ -170,7 +169,9 @@ def write_index_json(conn: sqlite3.Connection, out_dir: Path, *, run_id: str | N
                 "source_id": int(r["source_id"]),
                 "rel_path": str(r["rel_path"]),
                 "link_kind": str(r["link_kind"]),
-                "actual_target": str(r["actual_target"]) if r["actual_target"] is not None else None,
+                "actual_target": str(r["actual_target"])
+                if r["actual_target"] is not None
+                else None,
             }
             for r in link_rows
         ],

@@ -29,10 +29,10 @@ import os
 import platform
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 
@@ -74,7 +74,9 @@ def _synth_embeddings(n: int, k_people: int, dim: int, seed: int) -> np.ndarray:
         blobs.append(b)
     # Add remaining points as pure noise so total == n.
     if sum(b.shape[0] for b in blobs) < n:
-        extra = rng.normal(scale=0.5, size=(n - sum(b.shape[0] for b in blobs), dim)).astype(np.float32)
+        extra = rng.normal(scale=0.5, size=(n - sum(b.shape[0] for b in blobs), dim)).astype(
+            np.float32
+        )
         blobs.append(_l2(extra))
     out = np.concatenate(blobs, axis=0)[:n]
     return out
@@ -111,23 +113,25 @@ def run_benchmark(
     results.append(BenchResult("cosine_distance_matrix", elapsed, embs.shape[0]))
 
     # 2. HDBSCAN + 2-pass centroid merge over the full set.
-    elapsed, res = _time(
-        lambda: cluster_embeddings(embs, cfg=cfg)
+    elapsed, res = _time(lambda: cluster_embeddings(embs, cfg=cfg))
+    results.append(
+        BenchResult(
+            "cluster_embeddings",
+            elapsed,
+            embs.shape[0],
+            extra={"n_clusters": int(res.n_clusters), "n_noise": int(res.n_noise)},
+        )
     )
-    results.append(BenchResult(
-        "cluster_embeddings",
-        elapsed,
-        embs.shape[0],
-        extra={"n_clusters": int(res.n_clusters), "n_noise": int(res.n_noise)},
-    ))
 
     # 3. face_to_cluster_similarity (centroid lookup).
-    elapsed, _ = _time(
-        lambda: face_to_cluster_similarity(embs, res.labels)
+    elapsed, _ = _time(lambda: face_to_cluster_similarity(embs, res.labels))
+    results.append(
+        BenchResult(
+            "face_to_cluster_similarity",
+            elapsed,
+            embs.shape[0],
+        )
     )
-    results.append(BenchResult(
-        "face_to_cluster_similarity", elapsed, embs.shape[0],
-    ))
 
     # 4. HNSW index build + 100 random queries.
     hnsw_result: dict = {"backend": "n/a"}
@@ -145,18 +149,30 @@ def run_benchmark(
         q = _l2(q)
         query_elapsed, _ = _time(lambda: idx.knn_query(q, k=5))
 
-        results.append(BenchResult(
-            "hnsw_build", build_elapsed, 1,
-            extra={"max_elements": n_embeddings},
-        ))
-        results.append(BenchResult(
-            "hnsw_add_items", add_elapsed, embs.shape[0],
-            extra={"backend": idx.backend},
-        ))
-        results.append(BenchResult(
-            "hnsw_knn_query_100x5", query_elapsed, 100,
-            extra={"k": 5, "backend": idx.backend},
-        ))
+        results.append(
+            BenchResult(
+                "hnsw_build",
+                build_elapsed,
+                1,
+                extra={"max_elements": n_embeddings},
+            )
+        )
+        results.append(
+            BenchResult(
+                "hnsw_add_items",
+                add_elapsed,
+                embs.shape[0],
+                extra={"backend": idx.backend},
+            )
+        )
+        results.append(
+            BenchResult(
+                "hnsw_knn_query_100x5",
+                query_elapsed,
+                100,
+                extra={"k": 5, "backend": idx.backend},
+            )
+        )
     except Exception as e:
         hnsw_result["error"] = str(e)
 
@@ -216,8 +232,7 @@ def write_report(payload: dict, out_dir: Path) -> tuple[Path, Path]:
     for r in payload["results"]:
         rate = r["items"] / r["elapsed_sec"] if r["elapsed_sec"] > 0 else 0
         md_lines.append(
-            f"| `{r['name']}` | {r['items']:,} | {r['elapsed_sec']:.3f} | "
-            f"{rate:,.1f} |"
+            f"| `{r['name']}` | {r['items']:,} | {r['elapsed_sec']:.3f} | {rate:,.1f} |"
         )
     md_path = out_dir / "perf_report.md"
     md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")

@@ -23,6 +23,7 @@ from pick_face.review import ReviewDecision, apply_decisions, load_decisions
 def _seed_db(path: Path) -> None:
     con = open_db(path)
     import time
+
     now = time.time()
     con.execute(
         "INSERT INTO source(path, rel_path, size, mtime, hash, status, first_seen, last_seen) "
@@ -65,10 +66,12 @@ def _face_ids_by_cluster(path: Path) -> dict[int, list[int]]:
 def test_load_decisions_accepts_array(tmp_pure: Path) -> None:
     f = tmp_pure / "decisions.json"
     f.write_text(
-        json.dumps([
-            {"kind": "must_link", "face_a": 1, "face_b": 2},
-            {"kind": "remove", "face_id": 3},
-        ]),
+        json.dumps(
+            [
+                {"kind": "must_link", "face_a": 1, "face_b": 2},
+                {"kind": "remove", "face_id": 3},
+            ]
+        ),
         encoding="utf-8",
     )
     decisions = load_decisions(f)
@@ -170,7 +173,9 @@ def test_remove_marks_face_removed(tmp_pure: Path) -> None:
         con.close()
 
     con = open_db(db)
-    state = con.execute("SELECT review_state FROM face WHERE id=?", (fid,)).fetchone()["review_state"]
+    state = con.execute("SELECT review_state FROM face WHERE id=?", (fid,)).fetchone()[
+        "review_state"
+    ]
     con.close()
     assert state == "removed"
 

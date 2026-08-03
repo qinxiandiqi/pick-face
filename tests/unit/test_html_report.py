@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pick_face.reporter import (
     ReportStats,
     render_html,
@@ -10,12 +12,18 @@ from pick_face.reporter import (
 
 
 def _empty_stats(**overrides) -> ReportStats:
-    base = dict(
-        total_sources=0, active_sources=0, missing_sources=0,
-        total_faces=0, low_quality_faces=0, noise_faces=0,
-        persons=0, avg_face_to_cluster=0.0,
-        cluster_id_min=0, cluster_id_max=0,
-    )
+    base = {
+        "total_sources": 0,
+        "active_sources": 0,
+        "missing_sources": 0,
+        "total_faces": 0,
+        "low_quality_faces": 0,
+        "noise_faces": 0,
+        "persons": 0,
+        "avg_face_to_cluster": 0.0,
+        "cluster_id_min": 0,
+        "cluster_id_max": 0,
+    }
     base.update(overrides)
     return ReportStats(**base)
 
@@ -42,7 +50,7 @@ def test_html_includes_person_legend() -> None:
     assert "person-0001" in html
     assert "person-0002" in html
     # Wall grid is rendered too.
-    assert "class=\"wall\"" in html
+    assert 'class="wall"' in html
 
 
 def test_html_empty_persons_message() -> None:
@@ -54,12 +62,13 @@ def test_html_empty_persons_message() -> None:
 def test_html_warnings_section() -> None:
     stats = _empty_stats()
     html = render_html(
-        stats, config_dict={"runtime": {}},
+        stats,
+        config_dict={"runtime": {}},
         warnings=("Bad model state", "Disk space low"),
     )
     assert "Bad model state" in html
     assert "Disk space low" in html
-    assert "class=\"warnings\"" in html
+    assert 'class="warnings"' in html
 
 
 def test_html_dark_mode_attribute() -> None:
@@ -69,7 +78,7 @@ def test_html_dark_mode_attribute() -> None:
     assert 'data-theme="dark"' in html_dark
     assert 'data-theme="light"' in html_light
     # Dark CSS variables are present in dark mode.
-    assert "[data-theme=\"dark\"]" in html_dark
+    assert '[data-theme="dark"]' in html_dark
 
 
 def test_html_license_label_insightface() -> None:
@@ -93,7 +102,8 @@ def test_html_license_label_custom() -> None:
 def test_html_ack_summary_appears() -> None:
     stats = _empty_stats()
     html = render_html(
-        stats, config_dict={"runtime": {}},
+        stats,
+        config_dict={"runtime": {}},
         ack_summary="alice@corp 2026-08-03",
     )
     assert "alice@corp 2026-08-03" in html
@@ -134,8 +144,7 @@ def test_write_report_html_format(tmp_pure: Path) -> None:
     con = open_db(db)
     # Seed one cluster so the legend isn't empty.
     con.execute(
-        "INSERT INTO cluster(label, size, created_at, updated_at) "
-        "VALUES ('person-0001', 1, 0, 0)"
+        "INSERT INTO cluster(label, size, created_at, updated_at) VALUES ('person-0001', 1, 0, 0)"
     )
     con.commit()
     con.close()
@@ -164,8 +173,10 @@ def test_write_report_rejects_unknown_fmt(tmp_pure: Path) -> None:
     try:
         with __import__("pytest").raises(ValueError):
             write_report(
-                con, out_dir=tmp_pure,
-                config_dict={"runtime": {}}, fmt="xml",
+                con,
+                out_dir=tmp_pure,
+                config_dict={"runtime": {}},
+                fmt="xml",
             )
     finally:
         con.close()

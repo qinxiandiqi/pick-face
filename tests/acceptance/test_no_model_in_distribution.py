@@ -19,13 +19,20 @@ import subprocess
 import zipfile
 from pathlib import Path
 
-
 REPO = Path(__file__).resolve().parent.parent.parent
 
 # Paths we never descend into.
 SKIP_DIRS = {
-    ".venv", "venv", ".git", "node_modules", "build", "dist",
-    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".venv",
+    "venv",
+    ".git",
+    "node_modules",
+    "build",
+    "dist",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
     ".cache",  # user's local cache (the runner / report output)
     "smoke_out",
 }
@@ -43,7 +50,9 @@ def _iter_files(root: Path):
 def _git_tracked_files() -> list[Path]:
     """Return all files tracked by git, as absolute paths."""
     out = subprocess.check_output(
-        ["git", "ls-files"], cwd=str(REPO), text=True,
+        ["git", "ls-files"],
+        cwd=str(REPO),
+        text=True,
     )
     return [(REPO / line.strip().replace("/", os.sep)) for line in out.splitlines() if line.strip()]
 
@@ -63,9 +72,8 @@ def test_no_onnx_in_git_tracked_files() -> None:
     git is .onnx. This is what would actually ship in source tarballs."""
     tracked = _git_tracked_files()
     bad = [p for p in tracked if p.suffix.lower() in {".onnx", ".onnxdata"}]
-    assert not bad, (
-        f"AC-9 violation: {len(bad)} *.onnx file(s) tracked by git:\n  "
-        + "\n  ".join(str(p.relative_to(REPO)) for p in bad[:10])
+    assert not bad, f"AC-9 violation: {len(bad)} *.onnx file(s) tracked by git:\n  " + "\n  ".join(
+        str(p.relative_to(REPO)) for p in bad[:10]
     )
 
 
@@ -87,6 +95,7 @@ def test_no_onnx_in_built_wheel_or_sdist() -> None:
                         bad.append((arc, name))
         else:  # sdist tarball
             import tarfile
+
             with tarfile.open(arc, "r:gz") as t:
                 for member in t.getmembers():
                     if member.name.lower().endswith((".onnx", ".onnxdata")):

@@ -13,7 +13,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import numpy as np
 import typer
@@ -149,9 +149,7 @@ def init(
         Path,
         typer.Option("--output", "-o", help="Where to write pick-face.toml."),
     ] = Path("pick-face.toml"),
-    force: Annotated[
-        bool, typer.Option("--force", "-f", help="Overwrite if exists.")
-    ] = False,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Overwrite if exists.")] = False,
 ) -> None:
     """Generate a default pick-face.toml at --output (default: ./pick-face.toml)."""
     if output.exists() and not force:
@@ -207,6 +205,7 @@ def init_models(
         cfg = load_config(config_file)
     else:
         from pick_face.config import PickFaceConfig
+
         cfg = PickFaceConfig()
         console.print(
             f"[yellow]No config at {config_file}; using defaults "
@@ -245,15 +244,9 @@ def init_models(
 def scan(
     src: Annotated[list[Path], typer.Option("--src", "-s", help="Source dir(s).")],
     out: Annotated[Path, typer.Option("--out", "-o", help="Output dir.")] = Path("."),
-    config_file: Annotated[
-        Path, typer.Option("--config", "-c")
-    ] = Path("pick-face.toml"),
-    include: Annotated[
-        Optional[list[str]], typer.Option("--include", help="Glob include(s).")
-    ] = None,
-    exclude: Annotated[
-        Optional[list[str]], typer.Option("--exclude", help="Glob exclude(s).")
-    ] = None,
+    config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
+    include: Annotated[list[str] | None, typer.Option("--include", help="Glob include(s).")] = None,
+    exclude: Annotated[list[str] | None, typer.Option("--exclude", help="Glob exclude(s).")] = None,
 ) -> None:
     """Scan --src and write the source table (incremental diff)."""
     from pick_face.scanner import scan as scanner_scan
@@ -263,12 +256,9 @@ def scan(
     db_path = out / ".cache" / "index.sqlite"
     conn = open_db(db_path)
     try:
-        cur = conn.execute(
-            "SELECT path, size, mtime, hash FROM source WHERE status = 'active'"
-        )
+        cur = conn.execute("SELECT path, size, mtime, hash FROM source WHERE status = 'active'")
         db_rows: dict[str, tuple[int, float, str]] = {
-            r["path"]: (int(r["size"]), float(r["mtime"]), r["hash"] or "")
-            for r in cur.fetchall()
+            r["path"]: (int(r["size"]), float(r["mtime"]), r["hash"] or "") for r in cur.fetchall()
         }
     finally:
         conn.close()
@@ -321,11 +311,9 @@ def scan(
 @app.command()
 def index(
     out: Annotated[Path, typer.Option("--out", "-o")] = Path("."),
-    config_file: Annotated[
-        Path, typer.Option("--config", "-c")
-    ] = Path("pick-face.toml"),
+    config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
     provider: Annotated[
-        Optional[str], typer.Option("--provider", help="cpu/cuda/directml/auto")
+        str | None, typer.Option("--provider", help="cpu/cuda/directml/auto")
     ] = None,
 ) -> None:
     """Detect & embed faces for ADD/MOD sources (writes face table)."""
@@ -349,7 +337,8 @@ def index(
         run_id = _record_run_start(conn, "index")
         try:
             sources = [
-                dict(r) for r in conn.execute(
+                dict(r)
+                for r in conn.execute(
                     "SELECT id, path, status FROM source WHERE status = 'active'"
                 ).fetchall()
             ]
@@ -391,14 +380,24 @@ def index(
                             quality, low_quality, embedding, model_version, norm
                         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
-                            int(s["id"]), bx1, by1, bx2, by2,
+                            int(s["id"]),
+                            bx1,
+                            by1,
+                            bx2,
+                            by2,
                             det.det_score,
-                            float(kx[0, 0]), float(kx[0, 1]),
-                            float(kx[1, 0]), float(kx[1, 1]),
-                            float(kx[2, 0]), float(kx[2, 1]),
-                            float(kx[3, 0]), float(kx[3, 1]),
-                            float(kx[4, 0]), float(kx[4, 1]),
-                            det.quality, 0,
+                            float(kx[0, 0]),
+                            float(kx[0, 1]),
+                            float(kx[1, 0]),
+                            float(kx[1, 1]),
+                            float(kx[2, 0]),
+                            float(kx[2, 1]),
+                            float(kx[3, 0]),
+                            float(kx[3, 1]),
+                            float(kx[4, 0]),
+                            float(kx[4, 1]),
+                            det.quality,
+                            0,
                             emb.tobytes(),
                             runner.model_version,
                             float(np.linalg.norm(emb)),
@@ -406,13 +405,17 @@ def index(
                     )
                     faces_total += 1
 
-            _record_run_finish(conn, run_id, {
-                "faces_added": faces_total, "errors": errors,
-                "sources_seen": len(sources),
-            })
+            _record_run_finish(
+                conn,
+                run_id,
+                {
+                    "faces_added": faces_total,
+                    "errors": errors,
+                    "sources_seen": len(sources),
+                },
+            )
             console.print(
-                f"[bold]index[/bold]  sources={len(sources)}  "
-                f"faces={faces_total}  errors={errors}"
+                f"[bold]index[/bold]  sources={len(sources)}  faces={faces_total}  errors={errors}"
             )
         except Exception as e:
             _record_run_finish(conn, run_id, {"error": str(e)}, finished=False)
@@ -449,14 +452,13 @@ def _record_run_finish(conn, run_id: int, stats: dict, *, finished: bool = True)
 @app.command()
 def cluster(
     out: Annotated[Path, typer.Option("--out", "-o")] = Path("."),
-    config_file: Annotated[
-        Path, typer.Option("--config", "-c")
-    ] = Path("pick-face.toml"),
+    config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
     rebuild: Annotated[
         bool, typer.Option("--rebuild", help="Full recluster (drop labels).")
     ] = False,
     no_low_confidence: Annotated[
-        bool, typer.Option(
+        bool,
+        typer.Option(
             "--no-low-confidence",
             help="Skip writing low_confidence_faces.json (T-105).",
         ),
@@ -465,6 +467,8 @@ def cluster(
     """HDBSCAN + 2-pass centroid merge (docs/04 §2.4)."""
     from pick_face.cluster import (
         Constraint as _Constraint,  # noqa: F401  (placeholder for review consts)
+    )
+    from pick_face.cluster import (
         cluster_embeddings,
         face_to_cluster_similarity,
     )
@@ -475,19 +479,18 @@ def cluster(
     conn = open_db(db_path)
     try:
         faces = [
-            dict(r) for r in conn.execute(
-                "SELECT id, embedding, low_quality FROM face"
-            ).fetchall()
+            dict(r) for r in conn.execute("SELECT id, embedding, low_quality FROM face").fetchall()
         ]
         if not faces:
             console.print("[yellow]No faces in DB yet. Run `pick-face index` first.[/yellow]")
             return
 
         import numpy as np
+
         face_ids = [f["id"] for f in faces]
-        embeddings = np.stack([
-            np.frombuffer(f["embedding"], dtype=np.float32).copy() for f in faces
-        ])
+        embeddings = np.stack(
+            [np.frombuffer(f["embedding"], dtype=np.float32).copy() for f in faces]
+        )
         low_quality = np.array([bool(f["low_quality"]) for f in faces], dtype=bool)
 
         constraints: tuple = ()  # review constraints wired in T-104 (M2)
@@ -515,20 +518,24 @@ def cluster(
 
         # Reconcile existing cluster rows / ids with the new labels.
         existing = [
-            row["id"] for row in conn.execute(
-                "SELECT id FROM cluster ORDER BY id"
-            ).fetchall()
+            row["id"] for row in conn.execute("SELECT id FROM cluster ORDER BY id").fetchall()
         ]
         max_existing = max(existing) if existing else 0
         with conn:
             for new_lbl in range(result.n_clusters):
-                cid = (new_lbl + 1) if not existing else (existing[new_lbl] if new_lbl < len(existing) else (max_existing + (new_lbl - len(existing)) + 1))
+                cid = (
+                    (new_lbl + 1)
+                    if not existing
+                    else (
+                        existing[new_lbl]
+                        if new_lbl < len(existing)
+                        else (max_existing + (new_lbl - len(existing)) + 1)
+                    )
+                )
                 cnt = int((result.labels == new_lbl).sum())
                 # Cluster-level mean similarity (excluding noise).
                 member_mask = result.labels == new_lbl
-                cluster_mean = (
-                    float(sims[member_mask].mean()) if member_mask.any() else 0.0
-                )
+                cluster_mean = float(sims[member_mask].mean()) if member_mask.any() else 0.0
                 conn.execute(
                     """INSERT INTO cluster(id, label, size, mean_sim, created_at, updated_at)
                        VALUES (?, ?, ?, ?, ?, ?)
@@ -536,7 +543,14 @@ def cluster(
                            size = excluded.size,
                            mean_sim = excluded.mean_sim,
                            updated_at = excluded.updated_at""",
-                    (int(cid), f"person-{int(cid):04d}", cnt, cluster_mean, time.time(), time.time()),
+                    (
+                        int(cid),
+                        f"person-{int(cid):04d}",
+                        cnt,
+                        cluster_mean,
+                        time.time(),
+                        time.time(),
+                    ),
                 )
             for i, fid in enumerate(face_ids):
                 sim_i = float(sims[i])
@@ -546,9 +560,13 @@ def cluster(
                         (int(fid),),
                     )
                 else:
-                    cid = (result.labels[i] + 1) if not existing else (
-                        existing[result.labels[i]] if result.labels[i] < len(existing) else (
-                            max_existing + (result.labels[i] - len(existing)) + 1
+                    cid = (
+                        (result.labels[i] + 1)
+                        if not existing
+                        else (
+                            existing[result.labels[i]]
+                            if result.labels[i] < len(existing)
+                            else (max_existing + (result.labels[i] - len(existing)) + 1)
                         )
                     )
                     conn.execute(
@@ -577,10 +595,7 @@ def cluster(
 
         meta_paths = write_all_cluster_metas(conn, out)
         idx_path = write_index_json(conn, out)
-        console.print(
-            f"  mirrors  index.json → {idx_path}  "
-            f"({len(meta_paths)} cluster meta.json)"
-        )
+        console.print(f"  mirrors  index.json → {idx_path}  ({len(meta_paths)} cluster meta.json)")
 
         console.print(
             f"[bold]cluster[/bold]  clusters={result.n_clusters}  noise={result.n_noise}  "
@@ -593,25 +608,22 @@ def cluster(
 @app.command()
 def link(
     out: Annotated[Path, typer.Option("--out", "-o")] = Path("."),
-    config_file: Annotated[
-        Path, typer.Option("--config", "-c")
-    ] = Path("pick-face.toml"),
+    config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
     atomic: Annotated[
-        bool, typer.Option(
+        bool,
+        typer.Option(
             "--atomic/--no-atomic",
             help="Atomic swap via .staging-<ts> + .prev- (default: on)",
         ),
     ] = True,
 ) -> None:
     """Create symlinks/hardlinks/copies for each (cluster, source) pair."""
-    import shutil
     import json
 
     from pick_face.config import load_config
     from pick_face.linker import (
         link_or_copy,
         staging_rename_atomic,
-        unlink_safely,
     )
 
     cfg = load_config(config_file)
@@ -652,9 +664,7 @@ def link(
             counts[result.kind] += 1
             if result.degraded() and (counts["copy"] == 1 or len(fallbacks) < 5):
                 # Only surface a handful — the report aggregates the totals.
-                fallbacks.append(
-                    f"{src.name}: requested {prefer!r} → fell back to {result.kind!r}"
-                )
+                fallbacks.append(f"{src.name}: requested {prefer!r} → fell back to {result.kind!r}")
         except OSError as e:
             counts["errors"] += 1
             console.print(f"[red]link fail:[/red] {src} → {dst}: {e}")
@@ -691,12 +701,8 @@ def link(
 def run(
     src: Annotated[list[Path], typer.Option("--src", "-s")],
     out: Annotated[Path, typer.Option("--out", "-o")] = Path("."),
-    config_file: Annotated[
-        Path, typer.Option("--config", "-c")
-    ] = Path("pick-face.toml"),
-    provider: Annotated[
-        Optional[str], typer.Option("--provider")
-    ] = None,
+    config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
+    provider: Annotated[str | None, typer.Option("--provider")] = None,
     no_atomic: Annotated[
         bool, typer.Option("--no-atomic", help="Debug: skip staging+rename.")
     ] = False,
@@ -708,20 +714,18 @@ def run(
 @app.command()
 def report(
     out: Annotated[Path, typer.Option("--out", "-o")] = Path("."),
-    config_file: Annotated[
-        Path, typer.Option("--config", "-c")
-    ] = Path("pick-face.toml"),
-    fmt: Annotated[
-        str, typer.Option("--format", help="md / json / html (html M4)")
-    ] = "md",
+    config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
+    fmt: Annotated[str, typer.Option("--format", help="md / json / html (html M4)")] = "md",
     write_low_confidence: Annotated[
-        bool, typer.Option(
+        bool,
+        typer.Option(
             "--write-low-confidence/--no-low-confidence",
             help="Also regenerate low_confidence_faces.json (T-105).",
         ),
     ] = True,
     write_mirrors: Annotated[
-        bool, typer.Option(
+        bool,
+        typer.Option(
             "--write-mirrors/--no-mirrors",
             help="Also regenerate meta.json per cluster + index.json (T-108).",
         ),
@@ -737,10 +741,17 @@ def report(
     db_path = out / ".cache" / "index.sqlite"
     conn = open_db(db_path)
     try:
-        target = write_report(conn, out_dir=out, config_dict=_json.loads(_json.dumps(cfg.model_dump(mode="json"))), fmt=fmt)
+        target = write_report(
+            conn,
+            out_dir=out,
+            config_dict=_json.loads(_json.dumps(cfg.model_dump(mode="json"))),
+            fmt=fmt,
+        )
         if write_low_confidence:
             lc = write_low_confidence_json(
-                conn, out_dir=out, threshold=cfg.clustering.low_confidence,
+                conn,
+                out_dir=out,
+                threshold=cfg.clustering.low_confidence,
             )
             console.print(f"[green]wrote[/green] {lc}")
         if write_mirrors:
@@ -748,10 +759,7 @@ def report(
 
             meta_paths = write_all_cluster_metas(conn, out)
             idx_path = write_index_json(conn, out)
-            console.print(
-                f"[green]wrote[/green] {idx_path} "
-                f"({len(meta_paths)} cluster meta.json)"
-            )
+            console.print(f"[green]wrote[/green] {idx_path} ({len(meta_paths)} cluster meta.json)")
     finally:
         conn.close()
     console.print(f"[green]wrote[/green] {target}")
@@ -765,9 +773,7 @@ def report(
 @review_app.command("interactive")
 def review_interactive(
     out: Annotated[Path, typer.Option("--out", "-o")] = Path("."),
-    config_file: Annotated[
-        Path, typer.Option("--config", "-c")
-    ] = Path("pick-face.toml"),
+    config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
 ) -> None:
     """Launch TUI for merge / split / remove / rename decisions (M2)."""
     raise NotImplementedError("T-104: TUI review (M2)")
@@ -777,9 +783,7 @@ def review_interactive(
 def review_apply(
     file: Annotated[Path, typer.Argument(help="JSON file with decisions.")],
     out: Annotated[Path, typer.Option("--out", "-o")] = Path("."),
-    config_file: Annotated[
-        Path, typer.Option("--config", "-c")
-    ] = Path("pick-face.toml"),
+    config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
 ) -> None:
     """Apply a pre-edited review.json (M2)."""
     from pick_face.review import apply_decisions, load_decisions
@@ -812,9 +816,7 @@ def review_apply(
 @app.command()
 def gc(
     out: Annotated[Path, typer.Option("--out", "-o")] = Path("."),
-    config_file: Annotated[
-        Path, typer.Option("--config", "-c")
-    ] = Path("pick-face.toml"),
+    config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -905,12 +907,8 @@ def gc(
 @app.command()
 def prune(
     out: Annotated[Path, typer.Option("--out", "-o")] = Path("."),
-    config_file: Annotated[
-        Path, typer.Option("--config", "-c")
-    ] = Path("pick-face.toml"),
-    keep_n: Annotated[
-        int, typer.Option("--keep", help="How many .prev- to keep.")
-    ] = 3,
+    config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
+    keep_n: Annotated[int, typer.Option("--keep", help="How many .prev- to keep.")] = 3,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Plan only; do not delete (T-106).")
     ] = False,
@@ -973,12 +971,11 @@ def prune(
 def rollback(
     to: Annotated[str, typer.Option("--to", help="run_id (e.g. 2026-07-30T...)")],
     out: Annotated[Path, typer.Option("--out", "-o")] = Path("."),
-    config_file: Annotated[
-        Path, typer.Option("--config", "-c")
-    ] = Path("pick-face.toml"),
+    config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation.")] = False,
     dry_run: Annotated[
-        bool, typer.Option(
+        bool,
+        typer.Option(
             "--dry-run",
             help="Describe the swap; do not rename anything (T-106).",
         ),
@@ -1026,17 +1023,13 @@ def rollback(
     if out.exists():
         out.rename(current_backup)
     target.rename(out)
-    console.print(
-        f"[green]rolled back to[/green] {out}  (current is now at {current_backup})"
-    )
+    console.print(f"[green]rolled back to[/green] {out}  (current is now at {current_backup})")
 
 
 @app.command()
 def rebuild(
     out: Annotated[Path, typer.Option("--out", "-o")] = Path("."),
-    config_file: Annotated[
-        Path, typer.Option("--config", "-c")
-    ] = Path("pick-face.toml"),
+    config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation.")] = False,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Plan only; do not delete (T-106).")
@@ -1089,8 +1082,7 @@ def rebuild(
     for prev in prevs:
         shutil.rmtree(prev)
     console.print(
-        f"[bold]rebuild[/bold]  cache wiped; next `pick-face run` will "
-        f"start from a fresh scan."
+        "[bold]rebuild[/bold]  cache wiped; next `pick-face run` will start from a fresh scan."
     )
 
 

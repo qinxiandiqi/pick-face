@@ -21,7 +21,6 @@ from pathlib import Path
 
 def _seed(out: Path) -> None:
     """Replicate smoke_cli_link's seed: 3 sources, 3 clusters, 3 faces."""
-    import os
     db = out / ".cache" / "index.sqlite"
     db.parent.mkdir(parents=True, exist_ok=True)
     # We rely on `pick-face scan` having already created the schema. If the
@@ -41,9 +40,9 @@ def main() -> int:
     out.mkdir()
 
     (out / "pick-face.toml").write_text(
-        '[runtime]\n'
+        "[runtime]\n"
         'model_name = "buffalo_l"\n'
-        'accept_noncommercial_model_license = true\n'
+        "accept_noncommercial_model_license = true\n"
         'provider = "cpu"\n',
         encoding="utf-8",
     )
@@ -59,7 +58,9 @@ def main() -> int:
     # scan first
     r = subprocess.run(
         ["uv", "run", "pick-face", "scan", "--src", str(src), "--out", str(out)],
-        cwd=repo, capture_output=True, text=True,
+        cwd=repo,
+        capture_output=True,
+        text=True,
     )
     if r.returncode != 0:
         print("scan failed:", r.stderr, file=sys.stderr)
@@ -73,7 +74,7 @@ def main() -> int:
     for ci in range(3):
         cur = con.execute(
             "INSERT INTO cluster(label, size, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (f"person-{ci+1:04d}", 0, 0.0, 0.0),
+            (f"person-{ci + 1:04d}", 0, 0.0, 0.0),
         )
         clusters.append(cur.lastrowid)
     for i, s in enumerate(srcs):
@@ -90,11 +91,21 @@ def main() -> int:
 
     for fmt, expected in (("md", "report.md"), ("json", "report.json")):
         r = subprocess.run(
-            ["uv", "run", "pick-face", "report",
-             "--config", str(out / "pick-face.toml"),
-             "--out", str(out),
-             "--format", fmt],
-            cwd=repo, capture_output=True, text=True,
+            [
+                "uv",
+                "run",
+                "pick-face",
+                "report",
+                "--config",
+                str(out / "pick-face.toml"),
+                "--out",
+                str(out),
+                "--format",
+                fmt,
+            ],
+            cwd=repo,
+            capture_output=True,
+            text=True,
         )
         print(f"report {fmt} rc: {r.returncode}")
         if r.returncode != 0:

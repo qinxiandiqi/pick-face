@@ -8,7 +8,6 @@ from pick_face.config import PickFaceConfig
 from pick_face.errors import CommercialLicenseError, ModelLoadError
 from pick_face.runtime import check_commercial, resolve_providers
 
-
 # ---------------------------------------------------------------------------
 # resolve_providers
 # ---------------------------------------------------------------------------
@@ -55,9 +54,9 @@ def test_check_commercial_blocks_other_insightface_models() -> None:
 
 def test_check_commercial_passes_when_acknowledged() -> None:
     cfg = PickFaceConfig(runtime={"accept_noncommercial_model_license": True})
-    check_commercial(cfg)   # must not raise
+    check_commercial(cfg)  # must not raise
 
 
 def test_check_commercial_passes_for_alternative_model() -> None:
     cfg = PickFaceConfig(runtime={"model_name": "arcface_webface4m"})
-    check_commercial(cfg)   # must not raise
+    check_commercial(cfg)  # must not raise

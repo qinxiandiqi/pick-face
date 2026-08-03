@@ -15,14 +15,14 @@ without those packages is fine; the error is raised when you actually call
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
+from pick_face.config import PickFaceConfig
 from pick_face.errors import (
     CommercialLicenseError,
     ModelLoadError,
     ModelNotFoundError,
 )
-from pick_face.config import PickFaceConfig, INSIGHTFACE_MODELS
 
 
 def resolve_providers(requested: str) -> list[str]:
@@ -124,7 +124,7 @@ def check_commercial(cfg: PickFaceConfig) -> None:
         )
 
 
-def load_insightface_runner(cfg: PickFaceConfig) -> "_InsightFaceRunner":
+def load_insightface_runner(cfg: PickFaceConfig) -> _InsightFaceRunner:
     """Build an InsightFace-backed detector+embedder.
 
     Returns a single object that bundles detect→align→embed (InsightFace's
@@ -144,19 +144,23 @@ def load_insightface_runner(cfg: PickFaceConfig) -> "_InsightFaceRunner":
     except ImportError as e:
         raise ModelLoadError(
             "insightface + onnxruntime not installed in this environment. "
-            "Install with: uv pip install 'pick-face[gpu]'" if "insightface" in str(e) else
-            "onnxruntime not installed; install pick-face[gpu]"
+            "Install with: uv pip install 'pick-face[gpu]'"
+            if "insightface" in str(e)
+            else "onnxruntime not installed; install pick-face[gpu]"
         ) from e
 
     from insightface.app import FaceAnalysis
 
     providers = resolve_providers(cfg.runtime.provider)
     model_dir = str(cfg.runtime.model_dir)
-    model_root = model_dir.rsplit("/", 1)[0] if model_dir.endswith(cfg.runtime.model_name) else model_dir
+    model_root = (
+        model_dir.rsplit("/", 1)[0] if model_dir.endswith(cfg.runtime.model_name) else model_dir
+    )
 
     # The pack files live in <model_root>/<model_name>/. If absent, we raise
     # ModelNotFoundError with a clear next step (init-models --allow-network).
     from pathlib import Path
+
     pack_dir = Path(model_root) / cfg.runtime.model_name
     if not pack_dir.exists():
         raise ModelNotFoundError(
@@ -194,11 +198,19 @@ class _InsightFaceRunner:
     stage rather than the Detection).
     """
 
-    def __init__(self, app, model_name: str, det_thresh: float,
-                 det_size: tuple[int, int], providers: Sequence[str]) -> None:
+    def __init__(
+        self,
+        app,
+        model_name: str,
+        det_thresh: float,
+        det_size: tuple[int, int],
+        providers: Sequence[str],
+    ) -> None:
         self._app = app
         self.name = model_name
-        self.model_version = f"{model_name}@{getattr(app, 'model_dir', '').rsplit('/', 1)[-1] or 'unknown'}"
+        self.model_version = (
+            f"{model_name}@{getattr(app, 'model_dir', '').rsplit('/', 1)[-1] or 'unknown'}"
+        )
         self.det_thresh = det_thresh
         self.det_size = det_size
         self.providers = list(providers)

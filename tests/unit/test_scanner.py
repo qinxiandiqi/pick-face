@@ -21,7 +21,6 @@ from pick_face.scanner import (
 )
 from tests.unit._png import make_minimal_png
 
-
 # ---------------------------------------------------------------------------
 # iter_candidate_files
 # ---------------------------------------------------------------------------
@@ -40,7 +39,9 @@ def test_iter_filters_to_default_image_extensions(tmp_pure: Path) -> None:
 def test_iter_include_glob(tmp_pure: Path) -> None:
     (tmp_pure / "a.jpg").write_bytes(make_minimal_png())
     (tmp_pure / "a.png").write_bytes(make_minimal_png())
-    files = sorted(abs_p.name for _, abs_p, _ in iter_candidate_files([tmp_pure], include=["*.jpg"]))
+    files = sorted(
+        abs_p.name for _, abs_p, _ in iter_candidate_files([tmp_pure], include=["*.jpg"])
+    )
     assert files == ["a.jpg"]
 
 
@@ -50,7 +51,9 @@ def test_iter_exclude_glob(tmp_pure: Path) -> None:
     (sub / "x.jpg").write_bytes(make_minimal_png())
     (tmp_pure / "y.jpg").write_bytes(make_minimal_png())
 
-    files = sorted(abs_p.name for _, abs_p, _ in iter_candidate_files([tmp_pure], exclude=["trash/*"]))
+    files = sorted(
+        abs_p.name for _, abs_p, _ in iter_candidate_files([tmp_pure], exclude=["trash/*"])
+    )
     assert files == ["y.jpg"]
 
 
@@ -66,7 +69,8 @@ def test_iter_recurses_into_subdirs(tmp_pure: Path) -> None:
 def test_iter_handles_multiple_roots(tmp_pure: Path) -> None:
     r1 = tmp_pure / "r1"
     r2 = tmp_pure / "r2"
-    r1.mkdir(); r2.mkdir()
+    r1.mkdir()
+    r2.mkdir()
     (r1 / "a.png").write_bytes(make_minimal_png())
     (r2 / "b.png").write_bytes(make_minimal_png())
 
@@ -169,7 +173,7 @@ def test_scan_mixed_diff_in_one_pass(tmp_pure: Path) -> None:
     unchanged_hash = content_hash(unchanged_path)
 
     db = {
-        str(mod_path.resolve()): (1, 0.0, mod_hash),                 # size mismatch -> MOD
+        str(mod_path.resolve()): (1, 0.0, mod_hash),  # size mismatch -> MOD
         str(unchanged_path.resolve()): (size_u, mtime_u, unchanged_hash),
         str((tmp_pure / "gone.jpg").resolve()): (5, 100.0, "22" * 8),  # ghost -> DEL
     }

@@ -14,8 +14,6 @@ import os
 import time
 from pathlib import Path
 
-import pytest
-
 from pick_face.index import open_db
 from pick_face.mirrors import (
     INDEX_SCHEMA,
@@ -156,8 +154,8 @@ def test_index_json_shape(tmp_pure: Path) -> None:
 
     # Totals
     t = payload["totals"]
-    assert t["clusters"] == 3          # incl. merged
-    assert t["persons"] == 2           # excl. merged
+    assert t["clusters"] == 3  # incl. merged
+    assert t["persons"] == 2  # excl. merged
     assert t["links"] == 3
     assert t["faces"] == 3
     assert t["active_sources"] == 3
@@ -175,7 +173,7 @@ def test_index_json_shape(tmp_pure: Path) -> None:
     # Links list mirrors the DB
     ll = payload["links"]
     assert len(ll) == 3
-    kinds = sorted(l["link_kind"] for l in ll)
+    kinds = sorted(link["link_kind"] for link in ll)
     assert kinds == ["copy", "hardlink", "symlink"]
 
 

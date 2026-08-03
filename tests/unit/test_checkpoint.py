@@ -81,11 +81,16 @@ def test_load_non_dict_returns_none(tmp_pure: Path) -> None:
 
 def test_update_checkpoint_preserves_started_at(tmp_pure: Path) -> None:
     save_checkpoint(
-        tmp_pure, stage="cluster", mode="incremental",
-        last_face_id=10, started_at="2026-08-03T10:00:00+00:00",
+        tmp_pure,
+        stage="cluster",
+        mode="incremental",
+        last_face_id=10,
+        started_at="2026-08-03T10:00:00+00:00",
     )
     data = update_checkpoint(
-        tmp_pure, last_face_id=20, stats={"k": 1},
+        tmp_pure,
+        last_face_id=20,
+        stats={"k": 1},
     )
     assert data["started_at"] == "2026-08-03T10:00:00+00:00"
     assert data["last_face_id"] == 20
@@ -95,7 +100,10 @@ def test_update_checkpoint_preserves_started_at(tmp_pure: Path) -> None:
 def test_update_checkpoint_creates_when_missing(tmp_pure: Path) -> None:
     """update_checkpoint on a missing file creates one (caller sets stage)."""
     data = update_checkpoint(
-        tmp_pure, stage="index", mode="incremental", last_face_id=5,
+        tmp_pure,
+        stage="index",
+        mode="incremental",
+        last_face_id=5,
     )
     assert data["last_face_id"] == 5
     assert load_checkpoint(tmp_pure) is not None

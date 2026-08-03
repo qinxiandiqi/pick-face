@@ -37,7 +37,7 @@ _HAS_WIN_SYMLINK: bool | None = None
 class LinkResult:
     link_path: Path
     target: Path
-    kind: str        # "symlink" | "hardlink" | "junction" | "copy"
+    kind: str  # "symlink" | "hardlink" | "junction" | "copy"
     # The kind the caller asked for via `prefer=...`. If the actual
     # kind differs, callers can surface a "fell back to copy" warning
     # to the user (T-107). None means no preference (just "anything").
@@ -170,7 +170,9 @@ def unlink_safely(path: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def staging_rename_atomic(staging: Path, final: Path, prev_marker: str = ".prev-") -> tuple[Path | None, str]:
+def staging_rename_atomic(
+    staging: Path, final: Path, prev_marker: str = ".prev-"
+) -> tuple[Path | None, str]:
     """Atomically swap *staging* into place at *final*.
 
     Behaviour (docs/05 §5):

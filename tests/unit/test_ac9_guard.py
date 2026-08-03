@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 
 def _has_onnx(root: Path) -> list[Path]:
     """Replicates AC-9 guard's filesystem walk."""

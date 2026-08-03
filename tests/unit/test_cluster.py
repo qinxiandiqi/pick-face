@@ -18,7 +18,9 @@ from pick_face.cluster import (
 from pick_face.config import ClusteringConfig
 
 
-def _make_unit_blob(rng: np.random.Generator, center: np.ndarray, n: int, sigma: float = 0.05) -> np.ndarray:
+def _make_unit_blob(
+    rng: np.random.Generator, center: np.ndarray, n: int, sigma: float = 0.05
+) -> np.ndarray:
     """Generate n unit vectors centred around *center* (a unit vector itself)."""
     D = center.shape[0]
     blob = rng.normal(loc=center, scale=sigma, size=(n, D)).astype(np.float32)
@@ -27,7 +29,9 @@ def _make_unit_blob(rng: np.random.Generator, center: np.ndarray, n: int, sigma:
     return blob
 
 
-def _generate_people(rng: np.random.Generator, k_people: int = 5, per_person: int = 4, dim: int = 32) -> np.ndarray:
+def _generate_people(
+    rng: np.random.Generator, k_people: int = 5, per_person: int = 4, dim: int = 32
+) -> np.ndarray:
     """Return N=k*per L2-normalized 'embeddings' in k distinct clusters.
 
     Centers are constructed to be approximately orthogonal in the chosen dim
@@ -89,7 +93,7 @@ def test_low_quality_mask_excludes_faces_from_clusters() -> None:
     rng = np.random.default_rng(43)
     embs = _generate_people(rng, k_people=3, per_person=6, dim=16)
     low = np.zeros(embs.shape[0], dtype=bool)
-    low[3:6] = True     # mark one entire person as low-quality
+    low[3:6] = True  # mark one entire person as low-quality
     res = cluster_embeddings(embs, cfg=_cfg(), low_quality_mask=low)
     # The marked faces must carry label -1.
     assert (res.labels[3:6] == -1).all()
@@ -122,7 +126,7 @@ def test_must_link_constraint_unions_clusters() -> None:
     cfg = _cfg()
     # Force the must_link between two faces from different clusters.
     # Pre-cluster to find which cluster each face ends up in.
-    pre = cluster_embeddings(embs, cfg=cfg)
+    cluster_embeddings(embs, cfg=cfg)  # warm-up; result not needed here
     # Pick face 0 and face 6 — they belong to different people in our setup.
     cons = (Constraint(face_a=0, face_b=6, kind="must_link"),)
     post = cluster_embeddings(embs, cfg=cfg, constraints=cons)

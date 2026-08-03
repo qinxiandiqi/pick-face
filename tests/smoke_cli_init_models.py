@@ -11,7 +11,6 @@ the bundled `insightface.model_zoo`.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -30,19 +29,30 @@ def main() -> int:
     models.mkdir(parents=True)
 
     (out / "pick-face.toml").write_text(
-        f'[runtime]\n'
+        f"[runtime]\n"
         f'model_name = "buffalo_l"\n'
-        f'accept_noncommercial_model_license = true\n'
+        f"accept_noncommercial_model_license = true\n"
         f'provider = "cpu"\n'
         f'model_dir = "{models.as_posix()}"\n',
         encoding="utf-8",
     )
 
     r = subprocess.run(
-        ["uv", "run", "pick-face", "init-models",
-         "--config", str(out / "pick-face.toml"),
-         "--allow-network", "--yes"],
-        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        [
+            "uv",
+            "run",
+            "pick-face",
+            "init-models",
+            "--config",
+            str(out / "pick-face.toml"),
+            "--allow-network",
+            "--yes",
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     print("init-models rc:", r.returncode)
     # Notice can include unicode; we read as utf-8 with errors='replace' above.
@@ -65,15 +75,19 @@ def main() -> int:
 
     # Now run without --allow-network — must fail fast.
     r2 = subprocess.run(
-        ["uv", "run", "pick-face", "init-models",
-         "--config", str(out / "pick-face.toml")],
-        cwd=repo, capture_output=True, text=True,
+        ["uv", "run", "pick-face", "init-models", "--config", str(out / "pick-face.toml")],
+        cwd=repo,
+        capture_output=True,
+        text=True,
     )
     print("init-models (no --allow-network) rc:", r2.returncode)
     if r2.returncode == 0:
         print("FAIL: should refuse without --allow-network", file=sys.stderr)
         return 1
-    if "Refusing to download models" not in r2.stderr and "Refusing to download models" not in r2.stdout:
+    if (
+        "Refusing to download models" not in r2.stderr
+        and "Refusing to download models" not in r2.stdout
+    ):
         print("FAIL: refusal message missing", file=sys.stderr)
         return 1
 

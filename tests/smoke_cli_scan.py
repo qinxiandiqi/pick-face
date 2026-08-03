@@ -10,6 +10,7 @@ from pathlib import Path
 
 def main() -> int:
     import os
+
     work = Path(os.environ.get("TEMP", "/tmp")) / "pf-smoke"
     if work.exists():
         shutil.rmtree(work)
@@ -27,9 +28,14 @@ def main() -> int:
 
     repo = Path(__file__).resolve().parent.parent
     cmd = [
-        "uv", "run", "pick-face", "scan",
-        "--src", str(src),
-        "--out", str(out),
+        "uv",
+        "run",
+        "pick-face",
+        "scan",
+        "--src",
+        str(src),
+        "--out",
+        str(out),
     ]
     print(">>", " ".join(cmd))
     r = subprocess.run(cmd, cwd=repo, capture_output=True, text=True)
@@ -48,12 +54,16 @@ def main() -> int:
 
     # Check the source table shape.
     import sqlite3
+
     db = out / ".cache" / "index.sqlite"
     con = sqlite3.connect(str(db))
     con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT path, rel_path, size, status, hash FROM source ORDER BY path"
-    ).fetchall()]
+    rows = [
+        dict(r)
+        for r in con.execute(
+            "SELECT path, rel_path, size, status, hash FROM source ORDER BY path"
+        ).fetchall()
+    ]
     print("--- source table ---")
     for row in rows:
         print(row)

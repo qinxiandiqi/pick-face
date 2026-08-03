@@ -111,6 +111,7 @@ def apply_decisions(
 
 def _now() -> float:
     import time
+
     return time.time()
 
 

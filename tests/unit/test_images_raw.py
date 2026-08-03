@@ -10,7 +10,7 @@ We don't ship a real RAW fixture (10-30 MB). We verify the contract:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -44,11 +44,8 @@ def test_raw_fast_path_tries_pillow_first(tmp_pure: Path) -> None:
     raw_path.write_bytes(b"\x00" * 8)
 
     pillow_calls = []
-    real_open = None
     try:
         from PIL import Image as _PIL_Image
-
-        real_open = _PIL_Image.open
 
         def tracking_open(p, *a, **kw):
             pillow_calls.append(str(p))

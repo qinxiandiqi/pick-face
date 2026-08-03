@@ -11,7 +11,9 @@ from pathlib import Path
 
 # Load run_eval.py directly (it lives outside the src/ tree).
 _REPO = Path(__file__).resolve().parent.parent.parent
-_spec = importlib.util.spec_from_file_location("run_eval", _REPO / "tests" / "acceptance" / "run_eval.py")
+_spec = importlib.util.spec_from_file_location(
+    "run_eval", _REPO / "tests" / "acceptance" / "run_eval.py"
+)
 assert _spec and _spec.loader
 run_eval = importlib.util.module_from_spec(_spec)
 sys.modules["run_eval"] = run_eval
@@ -66,8 +68,11 @@ def test_load_truth_round_trip(tmp_pure: Path) -> None:
 def test_pairwise_metrics_perfect_clustering() -> None:
     # 3 alice + 2 bob in 2 clusters
     items = [
-        ("a1", 1), ("a2", 1), ("a3", 1),
-        ("b1", 2), ("b2", 2),
+        ("a1", 1),
+        ("a2", 1),
+        ("a3", 1),
+        ("b1", 2),
+        ("b2", 2),
     ]
     truth = {"a1": "alice", "a2": "alice", "a3": "alice", "b1": "bob", "b2": "bob"}
     pp, pr, b3_f1, n, nc, np = _pairwise_metrics(items, truth)
@@ -128,11 +133,17 @@ def test_run_eval_fails_when_thresholds_missed(tmp_pure: Path) -> None:
     # cluster 1 = {a1, a2, b1, b2, c1}  → all mixed → low precision
     _seed_db(db, [(1, "a1"), (1, "a2"), (1, "b1"), (1, "b2"), (1, "c1"), (2, "c2")])
     truth_csv = tmp_pure / "truth.csv"
-    _write_csv(truth_csv, [
-        ("a1", "alice"), ("a2", "alice"),
-        ("b1", "bob"), ("b2", "bob"),
-        ("c1", "carol"), ("c2", "carol"),
-    ])
+    _write_csv(
+        truth_csv,
+        [
+            ("a1", "alice"),
+            ("a2", "alice"),
+            ("b1", "bob"),
+            ("b2", "bob"),
+            ("c1", "carol"),
+            ("c2", "carol"),
+        ],
+    )
     truth = _load_truth(truth_csv)
     out = tmp_pure / "report.json"
     result = run_eval_fn(db, truth, out)

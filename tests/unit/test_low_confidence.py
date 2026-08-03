@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import time
 from pathlib import Path
 
@@ -66,9 +65,9 @@ def _seed_db(db: Path) -> tuple[int, int, int, int, int]:
         )
         return int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
 
-    f_high = _insert_face(cluster_ids[0], 0.85)   # above threshold
-    f_mid = _insert_face(cluster_ids[1], 0.45)    # above default 0.40
-    f_low = _insert_face(cluster_ids[2], 0.21)    # below default 0.40 → emits
+    f_high = _insert_face(cluster_ids[0], 0.85)  # above threshold
+    f_mid = _insert_face(cluster_ids[1], 0.45)  # above default 0.40
+    f_low = _insert_face(cluster_ids[2], 0.21)  # below default 0.40 → emits
     f_removed = _insert_face(cluster_ids[0], 0.10, state="removed")
     f_noise = _insert_face(None, None, state="auto")  # no cluster
 
@@ -103,7 +102,6 @@ def test_collect_sorts_worst_first(tmp_pure: Path) -> None:
 
     # Add 2 more low-confidence faces with different similarities.
     con = open_db(db)
-    now = time.time()
     cid = con.execute("SELECT id FROM cluster LIMIT 1").fetchone()["id"]
     sid = con.execute("SELECT id FROM source LIMIT 1").fetchone()["id"]
     for prob in (0.30, 0.05):
@@ -165,7 +163,10 @@ def test_write_low_confidence_json_shape(tmp_pure: Path) -> None:
     con = open_db(db)
     try:
         target = write_low_confidence_json(
-            con, out_dir=out_dir, threshold=0.40, run_id="2026-08-03T12-00-00",
+            con,
+            out_dir=out_dir,
+            threshold=0.40,
+            run_id="2026-08-03T12-00-00",
         )
     finally:
         con.close()
@@ -185,8 +186,14 @@ def test_write_low_confidence_json_shape(tmp_pure: Path) -> None:
     # Schema fields on every face.
     sample = payload["faces"][0]
     for k in (
-        "face_id", "cluster_id", "cluster_label", "similarity",
-        "source_id", "source_path", "rel_path", "review_state",
+        "face_id",
+        "cluster_id",
+        "cluster_label",
+        "similarity",
+        "source_id",
+        "source_path",
+        "rel_path",
+        "review_state",
     ):
         assert k in sample, f"missing field {k!r} in {sample}"
 

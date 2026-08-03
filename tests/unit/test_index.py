@@ -22,8 +22,14 @@ def test_open_db_creates_schema_on_fresh_db(tmp_pure: Path) -> None:
     # assert our 8 names are a subset.
     required = sorted(
         [
-            "cluster", "error_log", "face", "link",
-            "review_decision", "run", "schema_version", "source",
+            "cluster",
+            "error_log",
+            "face",
+            "link",
+            "review_decision",
+            "run",
+            "schema_version",
+            "source",
         ]
     )
     for t in required:

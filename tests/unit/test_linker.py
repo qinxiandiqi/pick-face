@@ -30,7 +30,11 @@ def test_link_prefer_symlink_falls_back_to_copy(tmp_pure: Path) -> None:
     res = link_or_copy(src, dst, prefer="symlink")
     assert res.kind == "symlink"
     assert dst.exists()
-    assert dst.resolve() == src.resolve() if os.path.islink(dst) else dst.read_bytes() == src.read_bytes()
+    assert (
+        dst.resolve() == src.resolve()
+        if os.path.islink(dst)
+        else dst.read_bytes() == src.read_bytes()
+    )
 
 
 def test_link_prefer_copy_makes_copy(tmp_pure: Path) -> None:
@@ -143,6 +147,7 @@ def _windows_can_symlink() -> bool:
     if not sys.platform.startswith("win"):
         return True
     import tempfile
+
     try:
         with tempfile.NamedTemporaryFile(delete=False) as f:
             tgt = f.name

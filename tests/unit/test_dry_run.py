@@ -10,8 +10,6 @@ import os
 import sys
 from pathlib import Path
 
-import pytest
-
 from pick_face.cli import app
 from pick_face.index import open_db
 
@@ -108,6 +106,7 @@ def test_prune_dry_run_does_not_delete(tmp_pure: Path) -> None:
     out = tmp_pure / "out"
     out.mkdir()
     import time
+
     for i in range(4):
         p = out.parent / f"{out.name}.prev-2026-07-30T00-00-0{i}"
         p.mkdir()

@@ -30,8 +30,8 @@ from __future__ import annotations
 
 import os
 import struct
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 
@@ -45,6 +45,7 @@ BACKEND_HNSWLIB = 1
 def _hnswlib_available() -> bool:
     try:
         import hnswlib  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -81,7 +82,7 @@ class HnswIndex:
         metric: str = "cosine",
         max_elements: int = 10_000,
         ef_construction: int = 200,
-        M: int = 16,
+        m: int = 16,
     ) -> None:
         if dim <= 0:
             raise ValueError(f"dim must be > 0, got {dim}")
@@ -92,7 +93,7 @@ class HnswIndex:
         self.metric = metric
         self.max_elements = int(max_elements)
         self._ef_construction = ef_construction
-        self._M = M
+        self._m = m
         self._count = 0
         self._backend = "hnswlib" if _hnswlib_available() else "numpy"
         self._items: np.ndarray | None = None  # numpy fallback storage
@@ -110,7 +111,7 @@ class HnswIndex:
         idx.init_index(
             max_elements=self.max_elements,
             ef_construction=self._ef_construction,
-            M=self._M,
+            M=self._m,
         )
         idx.set_ef(50)  # query-time ef
         idx.set_num_threads(1)
@@ -123,9 +124,7 @@ class HnswIndex:
         Callers should keep their own (face_id → index_id) map.
         """
         if embeddings.ndim != 2 or embeddings.shape[1] != self.dim:
-            raise ValueError(
-                f"expected (N, {self.dim}) embeddings, got {embeddings.shape}"
-            )
+            raise ValueError(f"expected (N, {self.dim}) embeddings, got {embeddings.shape}")
         n = embeddings.shape[0]
         if n == 0:
             return np.zeros(0, dtype=np.int64)
@@ -135,7 +134,11 @@ class HnswIndex:
             norms = np.linalg.norm(emb, axis=1, keepdims=True)
             norms = np.where(norms < 1e-12, 1.0, norms)
             emb = emb / norms
-        ids = np.arange(self._count, self._count + n, dtype=np.int64) if ids is None else np.asarray(ids, dtype=np.int64)
+        ids = (
+            np.arange(self._count, self._count + n, dtype=np.int64)
+            if ids is None
+            else np.asarray(ids, dtype=np.int64)
+        )
         if self._backend == "hnswlib":
             self._hnsw.add_items(emb, ids, replace_deleted=False)
         else:
@@ -148,16 +151,14 @@ class HnswIndex:
                 new_size = max(self.max_elements * 2, needed)
                 self._items = np.resize(self._items, (new_size, self.dim))
                 self.max_elements = new_size
-            self._items[self._count:self._count + n] = emb
+            self._items[self._count : self._count + n] = emb
         self._count += n
         return ids
 
     def knn_query(self, queries: np.ndarray, k: int = 1) -> tuple[np.ndarray, np.ndarray]:
         """Return (distances, ids) for each query, shape (Q, k)."""
         if queries.ndim != 2 or queries.shape[1] != self.dim:
-            raise ValueError(
-                f"expected (Q, {self.dim}) queries, got {queries.shape}"
-            )
+            raise ValueError(f"expected (Q, {self.dim}) queries, got {queries.shape}")
         if self._count == 0:
             # Empty index → return shape (Q, 0) arrays; this matches
             # what callers (incremental cluster assign, downstream review)
@@ -207,34 +208,38 @@ class HnswIndex:
             inner = tmp.with_suffix(tmp.suffix + ".hnsw")
             self._hnsw.save_index(str(inner))
             with open(tmp, "wb") as f:
-                f.write(struct.pack(
-                    ">4siiiI",
-                    MAGIC,
-                    self.dim,
-                    self._count,
-                    metric_int,
-                    backend,
-                ))
+                f.write(
+                    struct.pack(
+                        ">4siiiI",
+                        MAGIC,
+                        self.dim,
+                        self._count,
+                        metric_int,
+                        backend,
+                    )
+                )
                 f.write(inner.read_bytes())
             inner.unlink(missing_ok=True)
         else:
             backend = BACKEND_NUMPY
             payload = self._items[: self._count].tobytes()
             with open(tmp, "wb") as f:
-                f.write(struct.pack(
-                    ">4siiiI",
-                    MAGIC,
-                    self.dim,
-                    self._count,
-                    metric_int,
-                    backend,
-                ))
+                f.write(
+                    struct.pack(
+                        ">4siiiI",
+                        MAGIC,
+                        self.dim,
+                        self._count,
+                        metric_int,
+                        backend,
+                    )
+                )
                 f.write(payload)
         os.replace(tmp, path)
         return path
 
     @classmethod
-    def load(cls, path: Path) -> "HnswIndex":
+    def load(cls, path: Path) -> HnswIndex:
         """Load *path*. Raises ValueError if the header is unparseable so the
         caller can delete + rebuild."""
         path = Path(path)
@@ -303,10 +308,10 @@ def rebuild(
         out_path.unlink()
     idx = HnswIndex(dim=dim, metric=metric, max_elements=max_elements)
     batch: list[np.ndarray] = []
-    BATCH = 1024
+    batch_size = 1024
     for emb in embeddings:
         batch.append(emb)
-        if len(batch) >= BATCH:
+        if len(batch) >= batch_size:
             idx.add_items(np.stack(batch).astype(np.float32, copy=False))
             batch.clear()
     if batch:

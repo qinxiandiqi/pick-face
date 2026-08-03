@@ -32,10 +32,12 @@ def test_non_insightface_model_is_always_compliant() -> None:
 def test_explicit_acknowledgment_with_alternative_model() -> None:
     from pick_face.config import PickFaceConfig
 
-    cfg = PickFaceConfig(runtime={
-        "model_name": "arcface_webface4m",
-        "accept_noncommercial_model_license": False,
-    })
+    cfg = PickFaceConfig(
+        runtime={
+            "model_name": "arcface_webface4m",
+            "accept_noncommercial_model_license": False,
+        }
+    )
     # Even though the user has NOT acknowledged, they're using a non-InsightFace
     # model — so it's still commercially safe.
     assert cfg.is_commercial_unsafe() is False

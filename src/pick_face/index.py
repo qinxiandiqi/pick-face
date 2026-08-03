@@ -16,9 +16,9 @@ SCHEMA_VERSION = 1  # 当前 schema 版本号 (bump on every migration)
 # PRAGMAs applied on every connection open.
 # Reference: docs/05 §2.1.
 PRAGMAS: tuple[str, ...] = (
-    "PRAGMA journal_mode = WAL",        # 并发读 / 单写
-    "PRAGMA synchronous  = NORMAL",     # WAL 下可放宽
-    "PRAGMA foreign_keys = ON",         # 启用外键
+    "PRAGMA journal_mode = WAL",  # 并发读 / 单写
+    "PRAGMA synchronous  = NORMAL",  # WAL 下可放宽
+    "PRAGMA foreign_keys = ON",  # 启用外键
     "PRAGMA temp_store    = MEMORY",
     "PRAGMA mmap_size     = 268435456",  # 256 MB
 )
@@ -177,4 +177,5 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 def _now() -> float:
     """Monotonic-clock-ish; in seconds."""
     import time
+
     return time.time()

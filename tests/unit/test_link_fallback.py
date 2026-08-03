@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import sys
 from pathlib import Path
 
 import pytest
@@ -25,10 +23,9 @@ from pick_face.linker import LinkResult, link_or_copy
 from pick_face.reporter import (
     ReportStats,
     _warnings_for,
-    render_markdown,
     render_json,
+    render_markdown,
 )
-
 
 # ---------------------------------------------------------------------------
 # LinkResult.degraded()
@@ -90,12 +87,18 @@ def test_link_does_not_fallback_when_symlink_works(tmp_pure: Path) -> None:
 
 
 def _empty_stats(**overrides) -> ReportStats:
-    base = dict(
-        total_sources=0, active_sources=0, missing_sources=0,
-        total_faces=0, low_quality_faces=0, noise_faces=0,
-        persons=0, avg_face_to_cluster=0.0,
-        cluster_id_min=0, cluster_id_max=0,
-    )
+    base = {
+        "total_sources": 0,
+        "active_sources": 0,
+        "missing_sources": 0,
+        "total_faces": 0,
+        "low_quality_faces": 0,
+        "noise_faces": 0,
+        "persons": 0,
+        "avg_face_to_cluster": 0.0,
+        "cluster_id_min": 0,
+        "cluster_id_max": 0,
+    }
     base.update(overrides)
     return ReportStats(**base)
 
@@ -183,8 +186,12 @@ def test_collect_stats_reads_link_counts(tmp_pure: Path) -> None:
             "VALUES (?, ?, 1, 1.0, ?, 'active', 0, 0)",
             (f"/x/{i}.jpg", f"{i}.jpg", f"h{i}"),
         )
-        sids.append(con.execute("SELECT id FROM source WHERE rel_path=?", (f"{i}.jpg",)).fetchone()["id"])
-    con.execute("INSERT INTO cluster(label, size, created_at, updated_at) VALUES ('person-0001', 1, 0, 0)")
+        sids.append(
+            con.execute("SELECT id FROM source WHERE rel_path=?", (f"{i}.jpg",)).fetchone()["id"]
+        )
+    con.execute(
+        "INSERT INTO cluster(label, size, created_at, updated_at) VALUES ('person-0001', 1, 0, 0)"
+    )
     cid = con.execute("SELECT id FROM cluster").fetchone()["id"]
     for sid, kind in zip(sids, ["symlink", "symlink", "hardlink", "copy"]):
         con.execute(

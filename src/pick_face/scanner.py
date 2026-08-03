@@ -33,9 +33,24 @@ from pick_face.hashing import HASH_HEX_LEN, content_hash
 # clear "install pick-face[heic]" or similar hint.
 DEFAULT_IMAGE_EXTS: frozenset[str] = frozenset(
     {
-        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff",
-        ".heic", ".heif",
-        ".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".orf", ".rw2",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".bmp",
+        ".gif",
+        ".tif",
+        ".tiff",
+        ".heic",
+        ".heif",
+        ".cr2",
+        ".cr3",
+        ".nef",
+        ".arw",
+        ".dng",
+        ".raf",
+        ".orf",
+        ".rw2",
     }
 )
 
@@ -54,18 +69,16 @@ class ScanRow:
     """One row produced by scan() per filesystem path."""
 
     abs_path: Path
-    rel_path: Path              # relative to the --src root it came from
-    root: Path                  # the --src root that contained it
+    rel_path: Path  # relative to the --src root it came from
+    root: Path  # the --src root that contained it
     size: int
     mtime: float
     kind: DiffKind
-    hash: str | None = None     # xxh3_64 hex (16 chars); None for UNCHANGED+DEL
+    hash: str | None = None  # xxh3_64 hex (16 chars); None for UNCHANGED+DEL
 
     def __post_init__(self) -> None:
         if self.hash is not None and len(self.hash) != HASH_HEX_LEN:
-            raise ValueError(
-                f"hash must be {HASH_HEX_LEN}-char xxh3_64 hex; got {self.hash!r}"
-            )
+            raise ValueError(f"hash must be {HASH_HEX_LEN}-char xxh3_64 hex; got {self.hash!r}")
 
 
 @dataclass
@@ -79,7 +92,13 @@ class ScanStats:
     errors: int = 0
 
     def as_dict(self) -> dict[str, int]:
-        return {"add": self.add, "mod": self.mod, "unchanged": self.unchanged, "del": self.del_, "errors": self.errors}
+        return {
+            "add": self.add,
+            "mod": self.mod,
+            "unchanged": self.unchanged,
+            "del": self.del_,
+            "errors": self.errors,
+        }
 
 
 def iter_candidate_files(
@@ -101,7 +120,9 @@ def iter_candidate_files(
     """
     for root in roots:
         root = root.resolve()
-        for dirpath, dirnames, filenames in os.walk(root, followlinks=follow_symlinks, topdown=True):
+        for dirpath, dirnames, filenames in os.walk(
+            root, followlinks=follow_symlinks, topdown=True
+        ):
             # Prune excluded dirs early — saves syscalls on big trees.
             kept_dirs: list[str] = []
             for d in dirnames:
@@ -184,8 +205,11 @@ def scan(
             # the index layer will reuse the persisted hash on re-insert.
             h = db_rows.get(key, (0, 0.0, ""))[2] or None
 
-        rows.append(ScanRow(abs_path=abs_p, rel_path=rel, root=root,
-                            size=size, mtime=mtime, kind=kind, hash=h))
+        rows.append(
+            ScanRow(
+                abs_path=abs_p, rel_path=rel, root=root, size=size, mtime=mtime, kind=kind, hash=h
+            )
+        )
 
     # DEL: rows in DB whose path is missing on disk.
     seen = {str(r.abs_path.resolve()) for r in rows}
@@ -195,9 +219,17 @@ def scan(
         p = Path(db_path)
         if not p.exists():
             stats.del_ += 1
-            rows.append(ScanRow(abs_path=p, rel_path=Path(p.name), root=p.parent,
-                                size=size, mtime=mtime, kind=DiffKind.DEL,
-                                hash=h or None))
+            rows.append(
+                ScanRow(
+                    abs_path=p,
+                    rel_path=Path(p.name),
+                    root=p.parent,
+                    size=size,
+                    mtime=mtime,
+                    kind=DiffKind.DEL,
+                    hash=h or None,
+                )
+            )
 
     return rows, stats
 

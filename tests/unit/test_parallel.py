@@ -7,7 +7,6 @@ spawn is brittle in CI. The parallel path is smoke-tested with workers=2.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest

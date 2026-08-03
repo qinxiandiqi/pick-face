@@ -42,23 +42,23 @@ def estimate_similarity_transform(src: np.ndarray, dst: np.ndarray) -> np.ndarra
     dst_c = dst - dst_mean
 
     # Centroid variance → uniform scale factor.
-    src_var = (src_c ** 2).sum() / src.shape[0]
+    src_var = (src_c**2).sum() / src.shape[0]
     if src_var <= 0:
         # Degenerate: src is a single point, fall back to identity similarity.
         return np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
 
     # Cross-covariance matrix for rotation estimation.
-    H = src_c.T @ dst_c / src.shape[0]
-    U, S, Vt = np.linalg.svd(H)
-    R = Vt.T @ U.T
-    if np.linalg.det(R) < 0:
-        Vt[-1] *= -1
-        R = Vt.T @ U.T
+    h = src_c.T @ dst_c / src.shape[0]
+    u, s, vt = np.linalg.svd(h)
+    rot = vt.T @ u.T
+    if np.linalg.det(rot) < 0:
+        vt[-1] *= -1
+        rot = vt.T @ u.T
 
-    scale = (S.sum()) / src_var
-    t = dst_mean - scale * (R @ src_mean)
-    M = np.empty((2, 3), dtype=np.float32)
-    M[:2, :2] = scale * R
+    scale = (s.sum()) / src_var
+    t = dst_mean - scale * (rot @ src_mean)
+    M = np.empty((2, 3), dtype=np.float32)  # noqa: N806 — affine matrix
+    M[:2, :2] = scale * rot
     M[:, 2] = t
     return M
 
@@ -71,10 +71,11 @@ def warp_to_112(bgr: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
     """
     import cv2
 
-    M = estimate_similarity_transform(landmarks.astype(np.float32),
-                                     ARCFACE_REFERENCE_5P)
+    affine = estimate_similarity_transform(landmarks.astype(np.float32), ARCFACE_REFERENCE_5P)
     chip_bgr = cv2.warpAffine(
-        bgr, M, (112, 112),
+        bgr,
+        affine,
+        (112, 112),
         flags=cv2.INTER_LINEAR,
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=0,
@@ -84,4 +85,4 @@ def warp_to_112(bgr: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
 
 def warp_affine_batch(bgrs: list[np.ndarray], landmarks_list: list[np.ndarray]) -> list[np.ndarray]:
     """Apply warp_to_112 to many faces; returns list of 112x112 RGB chips."""
-    return [warp_to_112(b, kps) for b, kps in zip(bgrs, landmarks_list)]
+    return [warp_to_112(b, kps) for b, kps in zip(bgrs, landmarks_list, strict=False)]

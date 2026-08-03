@@ -36,9 +36,10 @@ import json
 import multiprocessing as mp
 import sys
 import time
+from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -47,9 +48,7 @@ class _FailedItem:
     error: str
 
 
-def _process_item(
-    item: Any, process_one: Callable[[Any], Any]
-) -> Any:
+def _process_item(item: Any, process_one: Callable[[Any], Any]) -> Any:
     """Top-level wrapper: returns the result or an _FailedItem marker."""
     try:
         return process_one(item)
@@ -102,7 +101,6 @@ def run_pool(
     _emit({"event": "start", "total": total}, progress, on_progress)
 
     results: list[Any] = [None] * total  # type: ignore[list-item]
-    item_to_index = {id(it): i for i, it in enumerate(items)}
 
     if workers == 1 or total <= 1:
         # Serial path. Avoids the spawn dance on Windows.
@@ -114,8 +112,7 @@ def run_pool(
         ctx = mp.get_context("spawn")
         with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as ex:
             future_to_index = {
-                ex.submit(_process_item, item, process_one): i
-                for i, item in enumerate(items)
+                ex.submit(_process_item, item, process_one): i for i, item in enumerate(items)
             }
             for done_count, fut in enumerate(as_completed(future_to_index), start=1):
                 i = future_to_index[fut]
@@ -159,6 +156,7 @@ def _summarize_item(item: Any) -> Any:
         return item
     try:
         from pathlib import Path
+
         if isinstance(item, Path):
             return str(item)
     except Exception:

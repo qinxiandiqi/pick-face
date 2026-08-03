@@ -5,7 +5,6 @@ face rows with random unit embeddings directly into the DB.
 
 from __future__ import annotations
 
-import json
 import shutil
 import sqlite3
 import subprocess
@@ -18,6 +17,7 @@ def main() -> int:
     work = Path("/tmp") / "pf-link-smoke"
     if sys.platform == "win32":
         import tempfile
+
         work = Path(tempfile.gettempdir()) / "pf-link-smoke"
     if work.exists():
         shutil.rmtree(work)
@@ -27,11 +27,11 @@ def main() -> int:
     out.mkdir()
     # Minimal config so `link` doesn't fail before doing its work.
     (out / "pick-face.toml").write_text(
-        '[runtime]\n'
+        "[runtime]\n"
         'model_name = "buffalo_l"\n'
-        'accept_noncommercial_model_license = true\n'
+        "accept_noncommercial_model_license = true\n"
         'provider = "cpu"\n\n'
-        '[link]\n'
+        "[link]\n"
         'prefer = "copy"\n',  # copy keeps the smoke test boring but predictable
         encoding="utf-8",
     )
@@ -49,7 +49,9 @@ def main() -> int:
     # Run scan
     r = subprocess.run(
         ["uv", "run", "pick-face", "scan", "--src", str(src), "--out", str(out)],
-        cwd=repo, capture_output=True, text=True,
+        cwd=repo,
+        capture_output=True,
+        text=True,
     )
     if r.returncode != 0:
         print("scan failed:", r.stderr, file=sys.stderr)
@@ -61,7 +63,8 @@ def main() -> int:
     con = sqlite3.connect(str(db))
     con.row_factory = sqlite3.Row
     srcs = [
-        dict(r) for r in con.execute("SELECT id, rel_path FROM source WHERE status='active'").fetchall()
+        dict(r)
+        for r in con.execute("SELECT id, rel_path FROM source WHERE status='active'").fetchall()
     ]
     print(f"sources: {len(srcs)}")
 
@@ -70,12 +73,12 @@ def main() -> int:
     for ci in range(3):
         cur = con.execute(
             "INSERT INTO cluster(id, label, size, created_at, updated_at) VALUES (?, ?, 0, 0, 0)",
-            (ci + 1, f"person-{ci+1:04d}"),
+            (ci + 1, f"person-{ci + 1:04d}"),
         )
         clusters.append(cur.lastrowid)
 
     import os
-    import struct
+
     for i, s in enumerate(srcs):
         cid = clusters[i % 3]
         # 512-d float32 = 2048 bytes of plausible-looking data
@@ -91,10 +94,19 @@ def main() -> int:
     con.close()
 
     r = subprocess.run(
-        ["uv", "run", "pick-face", "link",
-         "--config", str(out / "pick-face.toml"),
-         "--out", str(out)],
-        cwd=repo, capture_output=True, text=True,
+        [
+            "uv",
+            "run",
+            "pick-face",
+            "link",
+            "--config",
+            str(out / "pick-face.toml"),
+            "--out",
+            str(out),
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
     )
     print("link rc:", r.returncode)
     if r.stderr:
