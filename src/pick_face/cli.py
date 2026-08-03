@@ -684,7 +684,26 @@ def review_apply(
     ] = Path("pick-face.toml"),
 ) -> None:
     """Apply a pre-edited review.json (M2)."""
-    raise NotImplementedError("T-104: review apply (M2)")
+    from pick_face.review import apply_decisions, load_decisions
+
+    out = out.resolve()
+    db_path = out / ".cache" / "index.sqlite"
+    if not db_path.exists():
+        _exit(SourceNotFoundError(f"no DB at {db_path}; run scan+cluster first"))
+    if not file.exists():
+        _exit(SourceNotFoundError(f"review file not found: {file}"))
+
+    decisions = load_decisions(file)
+    conn = open_db(db_path)
+    try:
+        ml, cl, rm, rn = apply_decisions(conn, decisions)
+    finally:
+        conn.close()
+    console.print(
+        f"[bold]review[/bold] applied "
+        f"must_link={ml} cannot_link={cl} remove={rm} rename={rn} "
+        f"(re-run \`pick-face link\` to materialize changes on disk)"
+    )
 
 
 # ---------------------------------------------------------------------------
