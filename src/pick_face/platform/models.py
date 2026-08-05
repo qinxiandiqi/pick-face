@@ -19,7 +19,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pick_face.config import INSIGHTFACE_MODELS, PickFaceConfig
+from pick_face.core.config import INSIGHTFACE_MODELS, PickFaceConfig
 
 LICENSE_NOTICE = """\
 ═══════════════════════════════════════════════════════════════════════

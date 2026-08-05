@@ -3,7 +3,7 @@
 A minimal Embedder here is just `numpy`-based — face crops come in as
 already-aligned 112x112 RGB chips, and the embedder returns a 512-D float32
 vector. The InsightFace-backed implementation lives in
-`pick_face.runtime.face_runtime` so unit tests don't pay the 100+MB
+`pick_face.platform.runtime.face_runtime` so unit tests don't pay the 100+MB
 model download cost to exercise the dataclass shape.
 """
 

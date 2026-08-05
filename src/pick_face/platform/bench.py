@@ -96,12 +96,12 @@ def run_benchmark(
     seed: int = 0,
 ) -> dict:
     """Run the in-process hot-path benchmark and return the report dict."""
-    from pick_face.cluster import (
+    from pick_face.core.config import ClusteringConfig
+    from pick_face.ingest.cluster import (
         cluster_embeddings,
         face_to_cluster_similarity,
     )
-    from pick_face.config import ClusteringConfig
-    from pick_face.embedder import cosine_distance_matrix
+    from pick_face.ingest.embedder import cosine_distance_matrix
 
     cfg = ClusteringConfig(min_cluster_size=3, min_samples=2, merge_threshold=0.55)
     embs = _synth_embeddings(n_embeddings, k_people, dim, seed)
@@ -136,7 +136,7 @@ def run_benchmark(
     # 4. HNSW index build + 100 random queries.
     hnsw_result: dict = {"backend": "n/a"}
     try:
-        from pick_face.index_hnsw import HnswIndex
+        from pick_face.store.index_hnsw import HnswIndex
 
         elapsed, idx = _time(lambda: HnswIndex(dim=dim, metric="cosine", max_elements=n_embeddings))
         build_elapsed = elapsed

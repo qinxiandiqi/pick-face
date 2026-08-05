@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pick_face.bench import run_benchmark, write_report
+from pick_face.platform.bench import run_benchmark, write_report
 
 
 def test_bench_runs_and_returns_payload() -> None:

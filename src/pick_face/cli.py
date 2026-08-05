@@ -21,8 +21,8 @@ from rich.console import Console
 from rich.panel import Panel
 
 from pick_face import __version__
-from pick_face.config import write_default_config
-from pick_face.errors import (
+from pick_face.core.config import write_default_config
+from pick_face.core.errors import (
     CliArgError,
     CommercialLicenseError,
     ConfigError,
@@ -32,7 +32,7 @@ from pick_face.errors import (
     PickFaceError,
     SourceNotFoundError,
 )
-from pick_face.index import open_db
+from pick_face.store.index import open_db
 
 app = typer.Typer(
     name="pick-face",
@@ -194,8 +194,8 @@ def init_models(
             )
         )
 
-    from pick_face.config import load_config
-    from pick_face.models import (
+    from pick_face.core.config import load_config
+    from pick_face.platform.models import (
         is_insightface_model,
         license_notice_for,
         write_license_ack,
@@ -204,7 +204,7 @@ def init_models(
     if config_file.exists():
         cfg = load_config(config_file)
     else:
-        from pick_face.config import PickFaceConfig
+        from pick_face.core.config import PickFaceConfig
 
         cfg = PickFaceConfig()
         console.print(
@@ -249,7 +249,7 @@ def scan(
     exclude: Annotated[list[str] | None, typer.Option("--exclude", help="Glob exclude(s).")] = None,
 ) -> None:
     """Scan --src and write the source table (incremental diff)."""
-    from pick_face.scanner import scan as scanner_scan
+    from pick_face.ingest.scanner import scan as scanner_scan
 
     if not src:
         _exit(CliArgError("--src must be provided at least once."))
@@ -317,10 +317,10 @@ def index(
     ] = None,
 ) -> None:
     """Detect & embed faces for ADD/MOD sources (writes face table)."""
-    from pick_face.config import load_config
-    from pick_face.errors import ImageDecodeError, PipelineFailureError
-    from pick_face.images import decode as decode_image
-    from pick_face.runtime import load_insightface_runner
+    from pick_face.core.config import load_config
+    from pick_face.core.errors import ImageDecodeError, PipelineFailureError
+    from pick_face.core.images import decode as decode_image
+    from pick_face.platform.runtime import load_insightface_runner
 
     cfg = load_config(config_file)
     if provider is not None:
@@ -465,14 +465,14 @@ def cluster(
     ] = False,
 ) -> None:
     """HDBSCAN + 2-pass centroid merge (docs/04 §2.4)."""
-    from pick_face.cluster import (
+    from pick_face.core.config import load_config
+    from pick_face.ingest.cluster import (
         Constraint as _Constraint,  # noqa: F401  (placeholder for review consts)
     )
-    from pick_face.cluster import (
+    from pick_face.ingest.cluster import (
         cluster_embeddings,
         face_to_cluster_similarity,
     )
-    from pick_face.config import load_config
 
     cfg = load_config(config_file)
     db_path = out / ".cache" / "index.sqlite"
@@ -577,7 +577,7 @@ def cluster(
         # T-105: emit low_confidence_faces.json next to the report so users
         # can quickly see which faces need review (docs/04 §2.5 + docs/09 §10).
         if not no_low_confidence:
-            from pick_face.reporter import write_low_confidence_json
+            from pick_face.output.reporter import write_low_confidence_json
 
             lc_path = write_low_confidence_json(
                 conn,
@@ -591,7 +591,7 @@ def cluster(
 
         # T-108: write meta.json per cluster + top-level index.json (docs/05 §5).
         # These are grep/debug mirrors; SQLite remains authoritative.
-        from pick_face.mirrors import write_all_cluster_metas, write_index_json
+        from pick_face.output.mirrors import write_all_cluster_metas, write_index_json
 
         meta_paths = write_all_cluster_metas(conn, out)
         idx_path = write_index_json(conn, out)
@@ -620,8 +620,8 @@ def link(
     """Create symlinks/hardlinks/copies for each (cluster, source) pair."""
     import json
 
-    from pick_face.config import load_config
-    from pick_face.linker import (
+    from pick_face.core.config import load_config
+    from pick_face.output.linker import (
         link_or_copy,
         staging_rename_atomic,
     )
@@ -734,8 +734,8 @@ def report(
     """Render report.{md,json,html} with top-line Model+License header (T-009)."""
     import json as _json
 
-    from pick_face.config import load_config
-    from pick_face.reporter import write_low_confidence_json, write_report
+    from pick_face.core.config import load_config
+    from pick_face.output.reporter import write_low_confidence_json, write_report
 
     cfg = load_config(config_file)
     db_path = out / ".cache" / "index.sqlite"
@@ -755,7 +755,7 @@ def report(
             )
             console.print(f"[green]wrote[/green] {lc}")
         if write_mirrors:
-            from pick_face.mirrors import write_all_cluster_metas, write_index_json
+            from pick_face.output.mirrors import write_all_cluster_metas, write_index_json
 
             meta_paths = write_all_cluster_metas(conn, out)
             idx_path = write_index_json(conn, out)
@@ -786,7 +786,7 @@ def review_apply(
     config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
 ) -> None:
     """Apply a pre-edited review.json (M2)."""
-    from pick_face.review import apply_decisions, load_decisions
+    from pick_face.store.review import apply_decisions, load_decisions
 
     out = out.resolve()
     db_path = out / ".cache" / "index.sqlite"

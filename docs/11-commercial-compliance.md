@@ -128,7 +128,7 @@ pick-face run --src /data/photos --out /data/by_face
 
 - InsightFace 商业 license（直接联系原厂）。
 - 第三方 SDK：AWS Rekognition、Face++、旷视、商汤、百度 AI 开放平台。
-- 在 pick-face 里实现 `pick_face.detector.FaceDetector` Protocol 即可，**业务代码 0 改**（[03 §6](03-architecture-design.md)）。
+- 在 pick-face 里实现 `pick_face.ingest.detector.FaceDetector` Protocol 即可，**业务代码 0 改**（[03 §6](03-architecture-design.md)）。
 
 #### 选项 C：换模型族（AdaFace / MagFace）
 

@@ -1,4 +1,4 @@
-"""Tests for pick_face.models.
+"""Tests for pick_face.platform.models.
 
 We do NOT touch the network here — the License Notice text + .license_ack
 JSON are the auditable surface (docs/11 §3.3 / §3.4). The actual weight
@@ -11,8 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pick_face.config import PickFaceConfig
-from pick_face.models import (
+from pick_face.core.config import PickFaceConfig
+from pick_face.platform.models import (
     is_insightface_model,
     license_ack_summary,
     license_notice_for,

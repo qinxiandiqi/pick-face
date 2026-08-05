@@ -23,29 +23,37 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
+# v1.0/T-306: pick_face is split into 5 sub-packages (core/ingest/store/output/platform).
+# Each sub-package contains its own .py modules; cli.py + __init__.py stay at top level.
 EXPECTED_MODULES = {
-    "align",
-    "bench",
-    "checkpoint",
+    # top level
     "cli",
-    "cluster",
-    "config",
-    "detector",
-    "embedder",
-    "errors",
-    "hashing",
-    "images",
-    "index",
-    "index_hnsw",
-    "linker",
-    "mirrors",
-    "models",
-    "parallel",
-    "paths",
-    "reporter",
-    "review",
-    "runtime",
-    "scanner",
+    # core
+    "core/config",
+    "core/errors",
+    "core/hashing",
+    "core/images",
+    "core/paths",
+    # ingest
+    "ingest/align",
+    "ingest/cluster",
+    "ingest/detector",
+    "ingest/embedder",
+    "ingest/scanner",
+    # store
+    "store/checkpoint",
+    "store/index",
+    "store/index_hnsw",
+    "store/review",
+    # output
+    "output/linker",
+    "output/mirrors",
+    "output/parallel",
+    "output/reporter",
+    # platform
+    "platform/bench",
+    "platform/models",
+    "platform/runtime",
 }
 
 
@@ -93,13 +101,22 @@ def test_wheel_contains_all_modules(built_artifacts) -> None:
     whl, _ = built_artifacts
     with zipfile.ZipFile(whl) as z:
         names = z.namelist()
-    modules_in_wheel = {
-        n.removeprefix("pick_face/").removesuffix(".py")
-        for n in names
-        if n.startswith("pick_face/")
-        and n.endswith(".py")
-        and "/" not in n.removeprefix("pick_face/")
-    }
+    # Sub-package modules: pick_face/<sub>/<mod>.py
+    # Top-level modules: pick_face/<mod>.py (no slash after prefix)
+    modules_in_wheel: set[str] = set()
+    for n in names:
+        if not n.startswith("pick_face/"):
+            continue
+        if not n.endswith(".py"):
+            continue
+        rel = n.removeprefix("pick_face/")
+        # Sub-package form: "<sub>/<mod>.py"
+        if "/" in rel:
+            sub, mod = rel.split("/", 1)
+            modules_in_wheel.add(f"{sub}/{mod[:-3]}")
+        else:
+            # Top-level: "<mod>.py"
+            modules_in_wheel.add(rel[:-3])
     # __init__.py is expected too.
     assert "pick_face/__init__.py" in names
     assert EXPECTED_MODULES.issubset(modules_in_wheel), (

@@ -14,14 +14,14 @@ import os
 import time
 from pathlib import Path
 
-from pick_face.index import open_db
-from pick_face.mirrors import (
+from pick_face.output.mirrors import (
     INDEX_SCHEMA,
     META_SCHEMA,
     write_all_cluster_metas,
     write_cluster_meta,
     write_index_json,
 )
+from pick_face.store.index import open_db
 
 
 def _seed_db(db: Path) -> None:

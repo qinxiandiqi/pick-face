@@ -38,21 +38,49 @@ The following CLI surface is **stable** within a major version:
 The following imports are stable:
 
 ```python
-from pick_face import __version__, __license__
-from pick_face.config import PickFaceConfig, INSIGHTFACE_MODELS
-from pick_face.errors import (
-    PickFaceError, ConfigError, LicenseError, ModelNotFoundError,
-)
-from pick_face.reporter import (
+# 1. Top-level namespace — every name re-exported from pick_face/__init__.py
+from pick_face import (
+    __version__, __license__,
+    # config
+    PickFaceConfig, ClusteringConfig, DetectionConfig, LinkConfig,
+    RuntimeConfig, load_config, write_default_config,
+    # errors
+    PickFaceError, ConfigError, CliArgError, CommercialLicenseError,
+    FaceError, ImageDecodeError, InterruptedError, ModelLoadError,
+    ModelNotFoundError, OutputNotWritableError, PipelineFailureError,
+    SourceNotFoundError,
+    EXIT_OK, EXIT_CONFIG, EXIT_MODEL, EXIT_PIPELINE, EXIT_INTERRUPTED,
+    # hashing / images / paths
+    content_hash, content_hash_bytes, file_id, HASH_ALGO,
+    DecodedImage, decode, MAX_LONG_EDGE,
+    APP_NAME, APP_AUTHOR, default_data_dir, default_model_dir, ensure_dir,
+    # reporter
     ReportStats, render_markdown, render_json, render_html,
     write_report, collect_stats,
+    collect_low_confidence_faces, write_low_confidence_json,
+    # store
+    HnswIndex, open_db, SCHEMA_VERSION,
+    # platform
+    resolve_providers, describe_provider_chain, check_commercial,
+    run_benchmark, BenchResult,
 )
-from pick_face.index import open_db
+
+# 2. Sub-package paths (preferred for new code)
+from pick_face.core.config import PickFaceConfig
+from pick_face.core.errors import PickFaceError
+from pick_face.store.index import open_db
+from pick_face.store.index_hnsw import HnswIndex
+from pick_face.output.reporter import render_markdown, render_json, render_html
+from pick_face.platform.runtime import resolve_providers
 ```
 
-Anything not in this list (e.g. `pick_face.cluster`,
-`pick_face.embedder`, `pick_face.hashing`) is **internal** — call sites
-exist for tests and CLI glue, and we may refactor at any time.
+The 5-domain layout (`pick_face.core` / `pick_face.ingest` /
+`pick_face.store` / `pick_face.output` / `pick_face.platform`) is
+**stable from v1.0 onward**. Breaking it requires a major version bump.
+
+Anything not in this list (e.g. `pick_face.ingest.cluster`,
+`pick_face.ingest.embedder`, `pick_face.core.hashing`) is **internal** —
+call sites exist for tests and CLI glue, and we may refactor at any time.
 
 ### 1.3 Persistence formats (stable)
 
@@ -76,12 +104,15 @@ change is always noted in `CHANGELOG.md`:
 
 - Default values for **optional** config fields (e.g.
   `clustering.min_cluster_size`, `runtime.batch_size`).
-- Internal Python modules (`pick_face.cluster`, `pick_face.scanner`,
-  `pick_face.detector`, `pick_face.embedder`, `pick_face.hashing`,
-  `pick_face.linker`, `pick_face.review`, `pick_face.mirrors`,
-  `pick_face.parallel`, `pick_face.runtime`, `pick_face.models`,
-  `pick_face.images`, `pick_face.cli`, `pick_face.bench`,
-  `pick_face.checkpoint`, `pick_face.index_hnsw`, `pick_face.alignment`).
+- Internal Python modules (e.g. `pick_face.ingest.cluster`,
+  `pick_face.ingest.scanner`, `pick_face.ingest.detector`,
+  `pick_face.ingest.embedder`, `pick_face.core.hashing`,
+  `pick_face.output.linker`, `pick_face.store.review`,
+  `pick_face.output.mirrors`, `pick_face.output.parallel`,
+  `pick_face.platform.runtime`, `pick_face.platform.models`,
+  `pick_face.core.images`, `pick_face.cli`, `pick_face.platform.bench`,
+  `pick_face.store.checkpoint`, `pick_face.store.index_hnsw`,
+  `pick_face.ingest.align`).
 - Performance characteristics (timings, memory).
 - Warning text and log formatting.
 - Default install extras (e.g. promoting `heic` to default).

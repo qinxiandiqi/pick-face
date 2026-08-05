@@ -17,11 +17,11 @@ import os
 import time
 from pathlib import Path
 
-from pick_face.index import open_db
-from pick_face.reporter import (
+from pick_face.output.reporter import (
     collect_low_confidence_faces,
     write_low_confidence_json,
 )
+from pick_face.store.index import open_db
 
 
 def _seed_db(db: Path) -> tuple[int, int, int, int, int]:

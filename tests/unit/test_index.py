@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def test_open_db_creates_schema_on_fresh_db(tmp_pure: Path) -> None:
-    from pick_face.index import SCHEMA_VERSION, open_db
+    from pick_face.store.index import SCHEMA_VERSION, open_db
 
     db_path = tmp_pure / ".cache" / "index.sqlite"
     conn = open_db(db_path)
@@ -42,7 +42,7 @@ def test_open_db_creates_schema_on_fresh_db(tmp_pure: Path) -> None:
 
 def test_open_db_is_idempotent(tmp_pure: Path) -> None:
     """Re-opening an existing DB must not crash and must not bump version."""
-    from pick_face.index import SCHEMA_VERSION, open_db
+    from pick_face.store.index import SCHEMA_VERSION, open_db
 
     db_path = tmp_pure / ".cache" / "index.sqlite"
     open_db(db_path).close()
@@ -54,7 +54,7 @@ def test_open_db_is_idempotent(tmp_pure: Path) -> None:
 
 
 def test_open_db_insert_and_read_back_source(tmp_pure: Path) -> None:
-    from pick_face.index import open_db
+    from pick_face.store.index import open_db
 
     db_path = tmp_pure / ".cache" / "index.sqlite"
     conn = open_db(db_path)

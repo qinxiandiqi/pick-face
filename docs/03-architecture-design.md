@@ -45,25 +45,35 @@
 
 ## 3. 模块划分
 
-| 模块 | 路径（建议） | 职责 |
-|------|-------------|------|
-| `pick_face.config` | `src/pick_face/config.py` | 配置 schema 校验、CLI 解析 |
-| `pick_face.scanner` | `src/pick_face/scanner.py` | 目录遍历、glob 过滤、content hash、增量 diff |
-| `pick_face.images` | `src/pick_face/images.py` | 解码、EXIF 旋转、降采样 |
-| `pick_face.detector` | `src/pick_face/detector.py` | 检测接口 `FaceDetector` |
-| `pick_face.embedder` | `src/pick_face/embedder.py` | 嵌入接口 `FaceEmbedder` |
-| `pick_face.align` | `src/pick_face/align.py` | 关键点对齐裁剪 |
-| `pick_face.cluster` | `src/pick_face/cluster.py` | 聚类 + 约束注入 + 置信度 |
-| `pick_face.index` | `src/pick_face/index.py` | SQLite schema、Annoy 索引 |
-| `pick_face.linker` | `src/pick_face/linker.py` | 软链接/回退；输出目录原子写入 |
-| `pick_face.reporter` | `src/pick_face/reporter.py` | `report.md/json/html` |
-| `pick_face.review` | `src/pick_face/review.py` | 人工校正子命令 |
-| `pick_face.runtime` | `src/pick_face/runtime.py` | 模型下载/缓存、device 选择 |
-| `pick_face.errors` | `src/pick_face/errors.py` | 异常层级 + 退出码契约 |
-| `pick_face.progress` | `src/pick_face/progress.py` | JSON 进度事件协议 |
-| `pick_face.hashing` | `src/pick_face/hashing.py` | xxh3_64 + 文件 ID 拼接 |
-| `pick_face.paths` | `src/pick_face/paths.py` | 跨平台缓存目录 |
-| `pick_face.cli` | `src/pick_face/cli.py` | Typer/Click 命令入口 |
+代码按领域拆成 5 个子包（`core` / `ingest` / `store` / `output` / `platform`），
+依赖单向：`core` ← `ingest` ← `store` ← `output`，`platform` 横切。
+每个子包内部再按职责分模块。
+
+| 子包 | 模块 | 路径 | 职责 |
+|------|------|------|------|
+| `pick_face.core`      | `config`      | `src/pick_face/core/config.py`      | 配置 schema 校验、CLI 解析 |
+| `pick_face.core`      | `errors`      | `src/pick_face/core/errors.py`      | 异常层级 + 退出码契约 |
+| `pick_face.core`      | `hashing`     | `src/pick_face/core/hashing.py`     | xxh3_64 + 文件 ID 拼接 |
+| `pick_face.core`      | `images`      | `src/pick_face/core/images.py`      | 解码、EXIF 旋转、降采样 |
+| `pick_face.core`      | `paths`       | `src/pick_face/core/paths.py`       | 跨平台缓存目录 |
+| `pick_face.ingest`    | `scanner`     | `src/pick_face/ingest/scanner.py`   | 目录遍历、glob 过滤、content hash、增量 diff |
+| `pick_face.ingest`    | `detector`    | `src/pick_face/ingest/detector.py`  | 检测接口 `FaceDetector` |
+| `pick_face.ingest`    | `embedder`    | `src/pick_face/ingest/embedder.py`  | 嵌入接口 `FaceEmbedder` |
+| `pick_face.ingest`    | `align`       | `src/pick_face/ingest/align.py`     | 关键点对齐裁剪 |
+| `pick_face.ingest`    | `cluster`     | `src/pick_face/ingest/cluster.py`   | 聚类 + 约束注入 + 置信度 |
+| `pick_face.store`     | `index`       | `src/pick_face/store/index.py`      | SQLite schema、WAL 模式 |
+| `pick_face.store`     | `index_hnsw`  | `src/pick_face/store/index_hnsw.py` | HNSW 索引（hnswlib + numpy fallback） |
+| `pick_face.store`     | `checkpoint`  | `src/pick_face/store/checkpoint.py` | 长任务 checkpoint / resume |
+| `pick_face.store`     | `review`      | `src/pick_face/store/review.py`     | 人工校正决策存储 |
+| `pick_face.output`    | `linker`      | `src/pick_face/output/linker.py`    | 软链接/回退；输出目录原子写入 |
+| `pick_face.output`    | `mirrors`     | `src/pick_face/output/mirrors.py`   | cluster meta / index.json 写入 |
+| `pick_face.output`    | `reporter`    | `src/pick_face/output/reporter.py`  | `report.md/json/html` |
+| `pick_face.output`    | `parallel`    | `src/pick_face/output/parallel.py`  | 进程池 + 进度汇报 |
+| `pick_face.platform`  | `runtime`     | `src/pick_face/platform/runtime.py` | ONNX provider probe、device 选择 |
+| `pick_face.platform`  | `models`      | `src/pick_face/platform/models.py`  | 模型下载/缓存、许可证门控 |
+| `pick_face.platform`  | `bench`       | `src/pick_face/platform/bench.py`   | 性能基准 |
+| `pick_face`           | `cli`         | `src/pick_face/cli.py`              | Typer 入口（保留在顶层） |
+| `pick_face`           | `__init__`    | `src/pick_face/__init__.py`         | 公共 API 重导出 |
 
 ## 4. 工程结构树状图
 
@@ -99,25 +109,40 @@ pick-face/
 │   ├── 0002_add_review_decision.sql
 │   └── ...
 ├── src/
-│   └── pick_face/              # 主包
-│       ├── __init__.py
+│   └── pick_face/              # 主包（5 个领域子包 + 顶层 cli/__init__）
+│       ├── __init__.py         # 公共 API 重导出
 │       ├── cli.py              # Typer 入口
-│       ├── config.py           # pydantic schema + toml 加载
-│       ├── scanner.py
-│       ├── images.py           # 解码/EXIF/降采样
-│       ├── detector.py         # FaceDetector Protocol + InsightFace 实现
-│       ├── embedder.py         # FaceEmbedder Protocol
-│       ├── align.py            # 关键点对齐
-│       ├── cluster.py          # HDBSCAN + 约束
-│       ├── index.py            # SQLite + HNSW
-│       ├── linker.py           # 软链接三段回退
-│       ├── reporter.py         # report.md / .json / .html
-│       ├── review.py           # review 子命令
-│       ├── runtime.py          # 模型下载/缓存/device 选择
-│       ├── errors.py           # 异常层级 + 退出码
-│       ├── progress.py         # JSON 事件协议
-│       ├── hashing.py          # xxh3_64 + 文件 ID 拼接
-│       ├── paths.py            # 跨平台缓存目录
+│       ├── core/               # 底层：config, errors, hashing, images, paths
+│       │   ├── __init__.py
+│       │   ├── config.py
+│       │   ├── errors.py
+│       │   ├── hashing.py
+│       │   ├── images.py
+│       │   └── paths.py
+│       ├── ingest/             # 摄取流水线：scanner, detector, embedder, align, cluster
+│       │   ├── __init__.py
+│       │   ├── scanner.py
+│       │   ├── detector.py
+│       │   ├── embedder.py
+│       │   ├── align.py
+│       │   └── cluster.py
+│       ├── store/              # 持久层：index, index_hnsw, checkpoint, review
+│       │   ├── __init__.py
+│       │   ├── index.py
+│       │   ├── index_hnsw.py
+│       │   ├── checkpoint.py
+│       │   └── review.py
+│       ├── output/             # 输出层：linker, mirrors, reporter, parallel
+│       │   ├── __init__.py
+│       │   ├── linker.py
+│       │   ├── mirrors.py
+│       │   ├── reporter.py
+│       │   └── parallel.py
+│       ├── platform/           # 平台/运维：runtime, models, bench
+│       │   ├── __init__.py
+│       │   ├── runtime.py
+│       │   ├── models.py
+│       │   └── bench.py
 │       └── py.typed
 ├── tests/
 │   ├── unit/                   # 单测

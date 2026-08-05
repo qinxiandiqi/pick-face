@@ -32,7 +32,7 @@ pick-face run \
 1. `cli` 解析 Typer 参数；`config` 模块用 pydantic 校验 `pick-face.toml` + CLI flag 的合并结果。
 2. 启动 PRAGMA（`journal_mode=WAL`, `foreign_keys=ON` 等，见 [05 §2.1](05-data-and-storage.md)），打开 `<out>/.cache/index.sqlite`。
 3. 启动 hnswlib，载入 `<out>/.cache/faces.hnsw`（首次运行则为空索引）。
-4. 加载 `pick_face.runtime` 中的 InsightFace 模型：
+4. 加载 `pick_face.platform.runtime` 中的 InsightFace 模型：
    - 优先用 `INSIGHTFACE_HOME` 或 `[runtime] model_dir` 指向的本地目录；
    - 否则（仅在 `--allow-network`）触发 `init-models` 下载逻辑；
    - 失败抛 `ModelLoadError`（退出码 3，见 [03 §9](03-architecture-design.md)）。
@@ -45,7 +45,7 @@ pick-face run \
 
 **目标**：把 `--src` 下所有允许的图片列出来，并和 SQLite 已有记录比对，决定每张图属于 ADD / MOD / UNCHANGED / DEL。
 
-**步骤**（`pick_face.scanner`）：
+**步骤**（`pick_face.ingest.scanner`）：
 
 1. **遍历**：用 `os.scandir` 递归扫描每个 `--src` 根目录。
 2. **过滤**：
@@ -77,7 +77,7 @@ class ScanDiff:
 
 **目标**：把 ADD/MOD 项解码成 BGR ndarray，并降采样到推理友好的尺寸。
 
-**步骤**（`pick_face.images`）：
+**步骤**（`pick_face.core.images`）：
 
 1. **格式路由**：
    - JPG/PNG/WebP/BMP/GIF → Pillow（`Image.open` + `ImageOps.exif_transpose`）。
@@ -129,7 +129,7 @@ embedding   ndarray (512,)        # **已 L2 归一化**，可直接 cosine
 
 **目标**：把检测到的人脸裁剪到「标准化的 112×112 RGB 图像」，送进嵌入网络。
 
-**做法**（`pick_face.align`）：
+**做法**（`pick_face.ingest.align`）：
 1. 取 5 个关键点（双眼、鼻尖、嘴角）。
 2. 用 InsightFace 内置的「参考关键点 + 仿射矩阵」做 warp，把人脸摆正 + 缩放到 112×112。
 3. 这一步把「同一人的不同角度/尺度」变成「近似同分布的输入」，是 ArcFace 识别能力的关键。
@@ -176,7 +176,7 @@ for f in faces:
 
 **目标**：把第 2–6 步的产物写入 SQLite，并同步增量更新 HNSW 索引。
 
-**事务**（`pick_face.index`）：
+**事务**（`pick_face.store.index`）：
 ```sql
 BEGIN IMMEDIATE;
 INSERT INTO source (...) VALUES (...) ON CONFLICT(path) DO UPDATE SET ...;
@@ -246,7 +246,7 @@ COMMIT;
 
 **目标**：根据 `face.cluster_id` 在 `<output>/<person-id>/<src_rel_path>` 创建软链接，指向原图。
 
-**步骤**（`pick_face.linker`）：
+**步骤**（`pick_face.output.linker`）：
 
 1. **逐 face 处理**（多人合影可能产生多个 face → 同一张图出现在多个人物下）：
    - 对每个 face 的 (cluster_id, source_id)：

@@ -1,7 +1,7 @@
 """Tests for HEIC decoding (T-102, M2 / docs/09 §2.1).
 
 We construct a tiny HEIC file in-memory via pillow-heif, save it,
-and verify pick_face.images.decode() can open it via the
+and verify pick_face.core.images.decode() can open it via the
 HEIC-fallback path.
 
 If the [heic] extra isn't installed, the test is skipped with a
@@ -37,7 +37,7 @@ def test_decode_heic_returns_bgr(tmp_pure: Path) -> None:
     path = tmp_pure / "sample.heic"
     img.save(path, format="HEIF")
 
-    from pick_face.images import decode
+    from pick_face.core.images import decode
 
     out = decode(path)
     assert out is not None
@@ -64,7 +64,7 @@ def test_decode_heic_missing_extra_returns_none(tmp_pure: Path) -> None:
     # If heic isn't installed, just check the import-failure path is
     # handled — by constructing a non-existent file and verifying decode()
     # raises FileNotFoundError.
-    from pick_face.images import decode
+    from pick_face.core.images import decode
 
     with pytest.raises((FileNotFoundError, OSError)):
         decode(tmp_pure / "ghost.heic")

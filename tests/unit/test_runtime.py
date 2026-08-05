@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from pick_face.config import PickFaceConfig
-from pick_face.errors import CommercialLicenseError, ModelLoadError
-from pick_face.runtime import check_commercial, resolve_providers
+from pick_face.core.config import PickFaceConfig
+from pick_face.core.errors import CommercialLicenseError, ModelLoadError
+from pick_face.platform.runtime import check_commercial, resolve_providers
 
 # ---------------------------------------------------------------------------
 # resolve_providers

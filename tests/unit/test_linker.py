@@ -1,4 +1,4 @@
-"""Tests for pick_face.linker.
+"""Tests for pick_face.output.linker.
 
 Exercises the link-or-copy fallback at file level (skipping directory
 junction which is Windows-only and requires admin). We cover:
@@ -22,7 +22,7 @@ import pytest
 def test_link_prefer_symlink_falls_back_to_copy(tmp_pure: Path) -> None:
     if sys.platform.startswith("win") and not _windows_can_symlink():
         pytest.skip("windows symlinks need developer mode")
-    from pick_face.linker import link_or_copy
+    from pick_face.output.linker import link_or_copy
 
     src = tmp_pure / "src.bin"
     src.write_bytes(b"hello world")
@@ -38,7 +38,7 @@ def test_link_prefer_symlink_falls_back_to_copy(tmp_pure: Path) -> None:
 
 
 def test_link_prefer_copy_makes_copy(tmp_pure: Path) -> None:
-    from pick_face.linker import link_or_copy
+    from pick_face.output.linker import link_or_copy
 
     src = tmp_pure / "src.bin"
     src.write_bytes(b"hello world")
@@ -50,7 +50,7 @@ def test_link_prefer_copy_makes_copy(tmp_pure: Path) -> None:
 
 def test_link_unlinks_existing_dst(tmp_pure: Path) -> None:
     """If dst already exists, it must be removed first (no stale data)."""
-    from pick_face.linker import link_or_copy
+    from pick_face.output.linker import link_or_copy
 
     src = tmp_pure / "src.bin"
     src.write_bytes(b"new")
@@ -63,7 +63,7 @@ def test_link_unlinks_existing_dst(tmp_pure: Path) -> None:
 
 
 def test_link_missing_src_raises(tmp_pure: Path) -> None:
-    from pick_face.linker import link_or_copy
+    from pick_face.output.linker import link_or_copy
 
     ghost = tmp_pure / "nope.bin"
     dst = tmp_pure / "out" / "link.bin"
@@ -72,13 +72,13 @@ def test_link_missing_src_raises(tmp_pure: Path) -> None:
 
 
 def test_unlink_safely_handles_missing(tmp_pure: Path) -> None:
-    from pick_face.linker import unlink_safely
+    from pick_face.output.linker import unlink_safely
 
     assert unlink_safely(tmp_pure / "nothing") is False
 
 
 def test_unlink_safely_removes_files_dirs_symlinks(tmp_pure: Path) -> None:
-    from pick_face.linker import link_or_copy, unlink_safely
+    from pick_face.output.linker import link_or_copy, unlink_safely
 
     # File via copy
     f = tmp_pure / "f.bin"
@@ -105,7 +105,7 @@ def test_unlink_safely_removes_files_dirs_symlinks(tmp_pure: Path) -> None:
 
 
 def test_staging_rename_atomic_creates_prev(tmp_pure: Path) -> None:
-    from pick_face.linker import staging_rename_atomic
+    from pick_face.output.linker import staging_rename_atomic
 
     final = tmp_pure / "out"
     staging = tmp_pure / ".staging"
@@ -124,7 +124,7 @@ def test_staging_rename_atomic_creates_prev(tmp_pure: Path) -> None:
 
 
 def test_staging_rename_no_existing_final(tmp_pure: Path) -> None:
-    from pick_face.linker import staging_rename_atomic
+    from pick_face.output.linker import staging_rename_atomic
 
     staging = tmp_pure / ".staging"
     staging.mkdir()

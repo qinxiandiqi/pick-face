@@ -18,14 +18,14 @@ from pathlib import Path
 
 import pytest
 
-from pick_face.index import open_db
-from pick_face.linker import LinkResult, link_or_copy
-from pick_face.reporter import (
+from pick_face.output.linker import LinkResult, link_or_copy
+from pick_face.output.reporter import (
     ReportStats,
     _warnings_for,
     render_json,
     render_markdown,
 )
+from pick_face.store.index import open_db
 
 # ---------------------------------------------------------------------------
 # LinkResult.degraded()
@@ -201,7 +201,7 @@ def test_collect_stats_reads_link_counts(tmp_pure: Path) -> None:
         )
     con.commit()
 
-    from pick_face.reporter import collect_stats
+    from pick_face.output.reporter import collect_stats
 
     stats = collect_stats(con)
     con.close()

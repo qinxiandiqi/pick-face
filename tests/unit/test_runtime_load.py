@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from pick_face.config import PickFaceConfig
-from pick_face.errors import CommercialLicenseError, ModelLoadError, ModelNotFoundError
-from pick_face.runtime import load_insightface_runner
+from pick_face.core.config import PickFaceConfig
+from pick_face.core.errors import CommercialLicenseError, ModelLoadError, ModelNotFoundError
+from pick_face.platform.runtime import load_insightface_runner
 
 
 def test_load_runner_fails_compliance_first(tmp_pure: Path) -> None:

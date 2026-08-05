@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from pick_face.errors import ImageDecodeError
+from pick_face.core.errors import ImageDecodeError
 
 # Long-edge cap (docs/09 §2.3 — 1600 px empirical knee)
 MAX_LONG_EDGE = 1600

@@ -8,7 +8,7 @@ import numpy as np
 
 
 def test_l2_normalize_handles_zero_vector() -> None:
-    from pick_face.embedder import l2_normalize
+    from pick_face.ingest.embedder import l2_normalize
 
     z = np.zeros(8, dtype=np.float32)
     out = l2_normalize(z)
@@ -16,7 +16,7 @@ def test_l2_normalize_handles_zero_vector() -> None:
 
 
 def test_l2_normalize_unit_length_output() -> None:
-    from pick_face.embedder import l2_normalize
+    from pick_face.ingest.embedder import l2_normalize
 
     v = np.array([3.0, 4.0, 0.0, -12.0, 5.0, 0.0, 1.0, 1.0], dtype=np.float32)
     out = l2_normalize(v)
@@ -25,7 +25,7 @@ def test_l2_normalize_unit_length_output() -> None:
 
 
 def test_l2_normalize_batched() -> None:
-    from pick_face.embedder import l2_normalize
+    from pick_face.ingest.embedder import l2_normalize
 
     a = np.array([[3.0, 4.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
     out = l2_normalize(a)
@@ -38,7 +38,7 @@ def test_l2_normalize_batched() -> None:
 
 
 def test_cosine_distance_diagonal_is_zero() -> None:
-    from pick_face.embedder import cosine_distance_matrix, l2_normalize
+    from pick_face.ingest.embedder import cosine_distance_matrix, l2_normalize
 
     rng = np.random.default_rng(0)
     a = rng.standard_normal((5, 512)).astype(np.float32)
@@ -49,7 +49,7 @@ def test_cosine_distance_diagonal_is_zero() -> None:
 
 
 def test_cosine_distance_self_loop_is_zero_for_unit_vec() -> None:
-    from pick_face.embedder import cosine_distance_matrix, l2_normalize
+    from pick_face.ingest.embedder import cosine_distance_matrix, l2_normalize
 
     rng = np.random.default_rng(1)
     a = rng.standard_normal((3, 16)).astype(np.float32)

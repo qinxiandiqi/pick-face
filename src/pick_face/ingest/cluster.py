@@ -29,8 +29,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from pick_face.config import ClusteringConfig
-from pick_face.embedder import cosine_distance_matrix, l2_normalize
+from pick_face.core.config import ClusteringConfig
+from pick_face.ingest.embedder import cosine_distance_matrix, l2_normalize
 
 
 @dataclass(frozen=True)

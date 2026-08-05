@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from pick_face.index import open_db
+from pick_face.store.index import open_db
 
 
 def _seed_db(out: Path) -> None:

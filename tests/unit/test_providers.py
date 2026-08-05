@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from pick_face.errors import ModelLoadError
-from pick_face.runtime import (
+from pick_face.core.errors import ModelLoadError
+from pick_face.platform.runtime import (
     describe_provider_chain,
     resolve_providers,
 )
@@ -94,7 +94,7 @@ def test_probe_providers_always_ends_with_cpu(monkeypatch) -> None:
     import onnxruntime as ort
 
     monkeypatch.setattr(ort, "get_available_providers", lambda: ["CPUExecutionProvider"])
-    from pick_face.runtime import _probe_providers
+    from pick_face.platform.runtime import _probe_providers
 
     chain = _probe_providers()
     assert chain[-1] == "CPUExecutionProvider"
@@ -109,7 +109,7 @@ def test_probe_providers_cuda_first(monkeypatch) -> None:
         "get_available_providers",
         lambda: ["CPUExecutionProvider", "CUDAExecutionProvider", "DmlExecutionProvider"],
     )
-    from pick_face.runtime import _probe_providers
+    from pick_face.platform.runtime import _probe_providers
 
     chain = _probe_providers()
     assert chain[0] == "CUDAExecutionProvider"
@@ -130,7 +130,7 @@ def test_probe_providers_tensorrt_promoted_after_cuda(monkeypatch) -> None:
             "TensorrtExecutionProvider",
         ],
     )
-    from pick_face.runtime import _probe_providers
+    from pick_face.platform.runtime import _probe_providers
 
     chain = _probe_providers()
     cuda_idx = chain.index("CUDAExecutionProvider")

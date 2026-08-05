@@ -57,3 +57,21 @@
 - **输出链接（output link）**：输出目录中指向源图的软链接（或兼容性回退），由 `link` 表审计。
 - **库（gallery）**：一次完整索引产生的所有数据，包含扫描快照、脸、人物、链接与运行日志。
 - **staging 输出**：写入 `<out>/.staging-<run_id>/` 的「半成品」目录，原子切换前对外不可见。
+
+## 4. 代码 / 包布局
+
+`src/pick_face/` 按 5 个领域拆成子包（v1.0 起稳定）：
+
+| 子包 | 职责 |
+|------|------|
+| `pick_face.core`     | 底层：config / errors / hashing / images / paths；不依赖任何其他子包。 |
+| `pick_face.ingest`   | 摄取流水线：scanner / detector / embedder / align / cluster。 |
+| `pick_face.store`    | 持久化：index (SQLite) / index_hnsw / checkpoint / review。 |
+| `pick_face.output`   | 输出层：linker / mirrors / reporter / parallel。 |
+| `pick_face.platform` | 平台/运维：runtime (ONNX) / models / bench。 |
+
+新代码请直接 `from pick_face.<sub>.<module> import ...`。
+每个子包都有自己的 `__init__.py`（声明 `__all__: list[str] = []`），
+顶层 `pick_face/__init__.py` 把公共 API 重新导出。
+
+详见 [03 §3 模块划分](03-architecture-design.md) 与 [03 §4.1 仓库布局](03-architecture-design.md)。

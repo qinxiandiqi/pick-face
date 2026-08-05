@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pick_face.index_hnsw import (
+from pick_face.store.index_hnsw import (
     BACKEND_HNSWLIB,
     BACKEND_NUMPY,
     MAGIC,

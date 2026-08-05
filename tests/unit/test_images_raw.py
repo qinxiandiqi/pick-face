@@ -14,12 +14,12 @@ from unittest.mock import patch
 
 import pytest
 
-from pick_face.errors import ImageDecodeError
+from pick_face.core.errors import ImageDecodeError
 
 
 def test_raw_without_rawpy_raises_install_hint(tmp_pure: Path) -> None:
     """No rawpy + a non-decodable .cr2 → ImageDecodeError mentioning [raw]."""
-    from pick_face.images import decode
+    from pick_face.core.images import decode
 
     raw_path = tmp_pure / "ghost.cr2"
     raw_path.write_bytes(b"\x00" * 8)
@@ -38,7 +38,7 @@ def test_raw_without_rawpy_raises_install_hint(tmp_pure: Path) -> None:
 
 def test_raw_fast_path_tries_pillow_first(tmp_pure: Path) -> None:
     """The Pillow.Image.open call should happen before any rawpy logic."""
-    from pick_face.images import _open_with_pillow
+    from pick_face.core.images import _open_with_pillow
 
     raw_path = tmp_pure / "x.nef"
     raw_path.write_bytes(b"\x00" * 8)

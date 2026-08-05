@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from pick_face.index import open_db
-from pick_face.review import ReviewDecision, apply_decisions, load_decisions
+from pick_face.store.index import open_db
+from pick_face.store.review import ReviewDecision, apply_decisions, load_decisions
 
 
 def _seed_db(path: Path) -> None:

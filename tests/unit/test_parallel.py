@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from pick_face.parallel import _FailedItem, run_pool
+from pick_face.output.parallel import _FailedItem, run_pool
 
 
 def _double(x: int) -> int:

@@ -10,12 +10,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from pick_face.cluster import (
+from pick_face.core.config import ClusteringConfig
+from pick_face.ingest.cluster import (
     Constraint,
     cluster_embeddings,
     face_to_cluster_similarity,
 )
-from pick_face.config import ClusteringConfig
 
 
 def _make_unit_blob(
@@ -194,7 +194,7 @@ def test_cluster_result_labels_are_compact() -> None:
 
 def test_incremental_assign_matches_existing_clusters() -> None:
     """Embeddings close to an existing centroid get that cluster ID."""
-    from pick_face.cluster import incremental_assign
+    from pick_face.ingest.cluster import incremental_assign
 
     rng = np.random.default_rng(0)
     dim = 64  # higher dim → random unit vectors are more orthogonal to axes
@@ -230,7 +230,7 @@ def test_incremental_assign_matches_existing_clusters() -> None:
 
 
 def test_incremental_assign_empty() -> None:
-    from pick_face.cluster import incremental_assign
+    from pick_face.ingest.cluster import incremental_assign
 
     out_labels, out_probs = incremental_assign(
         np.zeros((0, 16), dtype=np.float32),
@@ -245,7 +245,7 @@ def test_incremental_assign_empty() -> None:
 
 def test_incremental_assign_empty_with_real_centroids() -> None:
     """If there are no new faces but centroids exist, return empty arrays."""
-    from pick_face.cluster import incremental_assign
+    from pick_face.ingest.cluster import incremental_assign
 
     cents = np.eye(2, 16, dtype=np.float32)
     labels = np.array([1, 2], dtype=np.int32)
@@ -261,7 +261,7 @@ def test_incremental_assign_empty_with_real_centroids() -> None:
 
 
 def test_incremental_assign_no_centroids_marks_all_noise() -> None:
-    from pick_face.cluster import incremental_assign
+    from pick_face.ingest.cluster import incremental_assign
 
     new = np.eye(2, 16, dtype=np.float32)
     out_labels, _ = incremental_assign(

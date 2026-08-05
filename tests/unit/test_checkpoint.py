@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pick_face.checkpoint import (
+from pick_face.store.checkpoint import (
     SCHEMA,
     checkpoint_path,
     clear_checkpoint,

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pick_face.config import INSIGHTFACE_MODELS
+from pick_face.core.config import INSIGHTFACE_MODELS
 
 
 @dataclass(frozen=True)
@@ -500,8 +500,8 @@ def _license_ack_line(config_dict: dict) -> str | None:
     the runtime models module.
     """
     try:
-        from pick_face.config import PickFaceConfig
-        from pick_face.models import license_ack_summary
+        from pick_face.core.config import PickFaceConfig
+        from pick_face.platform.models import license_ack_summary
 
         cfg = PickFaceConfig.model_validate(config_dict)
         return license_ack_summary(cfg)

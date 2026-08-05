@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from pick_face.config import PickFaceConfig
-from pick_face.errors import (
+from pick_face.core.config import PickFaceConfig
+from pick_face.core.errors import (
     CommercialLicenseError,
     ModelLoadError,
     ModelNotFoundError,
@@ -233,8 +233,8 @@ class _InsightFaceRunner:
         """
         import numpy as np
 
-        from pick_face.align import warp_to_112
-        from pick_face.detector import detection_from_insightface
+        from pick_face.ingest.align import warp_to_112
+        from pick_face.ingest.detector import detection_from_insightface
 
         faces = self._app.get(bgr)
         out: list[tuple] = []

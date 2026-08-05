@@ -110,7 +110,7 @@ def _rough_quality(chip: np.ndarray) -> float:
 def chip_path_for(detection_id: int, out_dir: Path | None = None) -> Path:
     """Stable cache path for saving aligned chips to disk (used by debug)."""
     if out_dir is None:
-        from pick_face.paths import cache_dir
+        from pick_face.core.paths import cache_dir
 
         out_dir = cache_dir() / "chips"
     out_dir.mkdir(parents=True, exist_ok=True)

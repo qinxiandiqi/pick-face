@@ -25,7 +25,7 @@ from enum import Enum
 from fnmatch import fnmatch
 from pathlib import Path
 
-from pick_face.hashing import HASH_HEX_LEN, content_hash
+from pick_face.core.hashing import HASH_HEX_LEN, content_hash
 
 # Core image extensions supported by Pillow alone (docs/09 §2.1).
 # HEIC and RAW are behind extras; the scanner still lists them so glob'd

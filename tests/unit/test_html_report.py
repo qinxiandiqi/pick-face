@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pick_face.reporter import (
+from pick_face.output.reporter import (
     ReportStats,
     render_html,
     write_report,
@@ -137,7 +137,7 @@ def test_html_self_contained_no_external_resources() -> None:
 
 def test_write_report_html_format(tmp_pure: Path) -> None:
     """write_report supports fmt='html' (M4 / T-301)."""
-    from pick_face.index import open_db
+    from pick_face.store.index import open_db
 
     db = tmp_pure / ".cache" / "index.sqlite"
     db.parent.mkdir(parents=True)
@@ -165,7 +165,7 @@ def test_write_report_html_format(tmp_pure: Path) -> None:
 
 
 def test_write_report_rejects_unknown_fmt(tmp_pure: Path) -> None:
-    from pick_face.index import open_db
+    from pick_face.store.index import open_db
 
     db = tmp_pure / ".cache" / "index.sqlite"
     db.parent.mkdir(parents=True)

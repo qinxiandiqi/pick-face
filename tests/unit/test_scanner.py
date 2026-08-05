@@ -1,4 +1,4 @@
-"""Tests for pick_face.scanner.
+"""Tests for pick_face.ingest.scanner.
 
 Covers:
 - iter_candidate_files: extension filtering, glob include/exclude, nested walks
@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pick_face.hashing import content_hash
-from pick_face.scanner import (
+from pick_face.core.hashing import content_hash
+from pick_face.ingest.scanner import (
     DEFAULT_IMAGE_EXTS,
     DiffKind,
     ScanStats,

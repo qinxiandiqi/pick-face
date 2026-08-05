@@ -1,4 +1,4 @@
-"""Tests for pick_face.align.
+"""Tests for pick_face.ingest.align.
 
 These don't load InsightFace — they verify that the pure-geometry warp
 moves 5 source landmarks to the ArcFace reference positions in the 112x112
@@ -28,7 +28,7 @@ def _make_canvas(src_pts: np.ndarray, marker_radius: int = 3) -> np.ndarray:
 
 
 def test_warp_to_112_returns_correct_shape() -> None:
-    from pick_face.align import ARCFACE_REFERENCE_5P, warp_to_112
+    from pick_face.ingest.align import ARCFACE_REFERENCE_5P, warp_to_112
 
     src = ARCFACE_REFERENCE_5P + np.array([100, 100], dtype=np.float32)
     img = np.zeros((300, 300, 3), dtype=np.uint8)
@@ -40,7 +40,7 @@ def test_warp_to_112_returns_correct_shape() -> None:
 def test_warp_aligns_first_landmark_to_reference() -> None:
     """Stamp a marker at landmark[0] in the source; warp; verify the marker
     lands within ~1 px of the corresponding reference point in the chip."""
-    from pick_face.align import ARCFACE_REFERENCE_5P, warp_to_112
+    from pick_face.ingest.align import ARCFACE_REFERENCE_5P, warp_to_112
 
     src = ARCFACE_REFERENCE_5P + np.array([100, 100], dtype=np.float32)
     canvas = _make_canvas(src)
@@ -58,7 +58,7 @@ def test_warp_aligns_first_landmark_to_reference() -> None:
 
 def test_estimate_similarity_transform_identity_when_points_match() -> None:
     """If src == dst, the similarity matrix should be ~identity, scale 1."""
-    from pick_face.align import estimate_similarity_transform
+    from pick_face.ingest.align import estimate_similarity_transform
 
     pts = np.array([[10, 20], [30, 40], [50, 60], [70, 80], [90, 100]], dtype=np.float32)
     M = estimate_similarity_transform(pts, pts)
@@ -71,7 +71,7 @@ def test_estimate_similarity_transform_identity_when_points_match() -> None:
 
 
 def test_estimate_similarity_transform_translation() -> None:
-    from pick_face.align import estimate_similarity_transform
+    from pick_face.ingest.align import estimate_similarity_transform
 
     src = np.array([[10, 20], [30, 40], [50, 60], [70, 80], [90, 100]], dtype=np.float32)
     dst = src + np.array([5.0, 7.0], dtype=np.float32)
@@ -83,7 +83,7 @@ def test_estimate_similarity_transform_translation() -> None:
 
 def test_arcface_reference_shape() -> None:
     """The reference table is contract — changing it requires a model retrain."""
-    from pick_face.align import ARCFACE_REFERENCE_5P
+    from pick_face.ingest.align import ARCFACE_REFERENCE_5P
 
     assert ARCFACE_REFERENCE_5P.shape == (5, 2)
     # Symmetric eye line

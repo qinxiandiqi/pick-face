@@ -1,4 +1,4 @@
-"""Tests for pick_face.reporter.
+"""Tests for pick_face.output.reporter.
 
 Exercises the docs/11 §3.4 top-line header (Model + License + Accepted-by)
 plus the stats/legend rendering. We don't render via SQLite against a real
@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from pick_face.config import PickFaceConfig
-from pick_face.index import open_db
-from pick_face.reporter import collect_stats, render_json, render_markdown, write_report
+from pick_face.core.config import PickFaceConfig
+from pick_face.output.reporter import collect_stats, render_json, render_markdown, write_report
+from pick_face.store.index import open_db
 
 
 @pytest.fixture()
@@ -170,7 +170,7 @@ def test_write_report_rejects_unknown_fmt(populated_db, tmp_pure: Path) -> None:
 
 
 def test_warnings_for_acknowledged_compliance(populated_db) -> None:
-    from pick_face.reporter import _warnings_for
+    from pick_face.output.reporter import _warnings_for
 
     cfg = PickFaceConfig(runtime={"accept_noncommercial_model_license": True})
     d = _config_dict(cfg)
@@ -182,7 +182,7 @@ def test_warnings_for_acknowledged_compliance(populated_db) -> None:
 def test_render_markdown_includes_accepted_by_when_ack_present(
     populated_db, tmp_pure: Path
 ) -> None:
-    from pick_face.models import write_license_ack
+    from pick_face.platform.models import write_license_ack
 
     model_dir = tmp_pure / "models" / "buffalo_l"
     write_license_ack(model_dir, "buffalo_l", acked_by="alice")
