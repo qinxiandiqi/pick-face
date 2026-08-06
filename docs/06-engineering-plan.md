@@ -60,7 +60,7 @@
 |------|------|------|
 | 单元 | 配置、扫描器、链接器、SQLite schema 迁移、约束注入、xxh3 哈希、staging rename | `pytest` |
 | 集成 | detect/embed/cluster/link 端到端，使用 50–200 张合成数据 + mock 推理后端（`MockDetector`） | `pytest` + 内存 ONNX |
-| 验收 | 50 人 / 约 1000 张家庭相册 demo 数据集（与 [01 AC-1](01-product-requirement.md) 同源），跑出 `report.md` 与 `eval_report.json` | `tests/acceptance/run_eval.py` |
+| 验收 | 真实人脸 fixture（见 §3.3）跑出 `report.md` 与 `eval_report.json`；AC-1 软阈值由 `tests/integration/test_real_faces_ac1.py` 守护 | `tests/acceptance/run_eval.py` |
 | 平台 | GitHub Actions matrix：ubuntu-latest / macos-latest / windows-latest | `ci.yml` |
 | 性能 | benchmark 脚本，附 10k 张基准图（合成） + CPU/GPU 两份报告 | `bench/run.py` |
 
@@ -70,12 +70,47 @@
 
 - `tests/fixtures/synth_faces/`: 用合成人脸图（小图 + 噪声）跑扫描/聚类，单测无需真模型。
 - `tests/fixtures/mock_insightface.py`: 实现 `FaceDetector`/`FaceEmbedder` Protocol，生成确定性的伪 embedding（基于图像内容的 hash），用于 CI smoke。
-- `tests/fixtures/demo_dataset/`: 50 人 / 约 1000 张去标识化真实图（每人在 5–30 张之间随机），仅本地缓存（git-lfs 或下载脚本），用于 AC-1 验证。
+- `tests/fixtures/real_faces/`: 真实人脸测试集（见 §3.3），**不进 git**，由 `scripts/fetch_face_dataset.py` 按需拉取。
 
 ### 3.2 CI 缓存
 
 - 缓存 `~/.insightface/models/` 与 `~/.cache/uv`（如用 uv）。
 - 公开基准数据集走 `actions/cache` + `pytest-benchmark` 增量比对。
+
+### 3.3 真实人脸测试集（T-307）
+
+为 AC-1 验收准备一个**真实人脸** fixture；不放进 git，按需拉取。
+
+```
+# 一次性准备（要求可访问 cl.cam.ac.uk 或 figshare）
+uv run python scripts/fetch_face_dataset.py
+
+# 跑真实端到端
+uv run pytest tests/integration/ -v -m real_data
+
+# 默认 fixture：40 人 × 10 张 = 400 张 PGM（92×112 灰度） / ~4.5MB compressed
+# 来源 1：https://www.cl.cam.ac.uk/research/dtg/attarchive/pub/data/att_faces.tar.Z
+# 来源 2：https://ndownloader.figshare.com/files/5976027  (sklearn 用的镜像)
+# License：CC-BY 4.0（仅需 attribution，无 source-disclosure 义务）
+# Attribution：AT&T Laboratories Cambridge (formerly Olivetti Research Laboratory)
+```
+
+数据集选型理由（在所有备选中唯一同时满足六项约束的）：
+
+| 备选 | License | 体量 | 裁剪度 | 人数 | 抓取 | 类内差异 |
+|------|---------|------|--------|------|------|----------|
+| **AT&T/ORL/Olivetti** | CC-BY 4.0 ✓ | 4.5MB ✓ | 已裁 ✓ | 40 ✓ | 2 个镜像 ✓ | 表情/眼镜/姿态 ✓ |
+| 5-Celebrity-Faces | 不清 ✗ | 5MB | 已裁 | 5 | HF | 弱 |
+| LFW | CC-BY 4.0（但 700MB）| 过大 | 仅人脸框 | 5k+ | 多源 | 一般 |
+| Yale Face | 学术使用声明 | 1MB | 已裁 | 15 | 单源 | 一般 |
+| Caltech Faces 1999 | 不允许再分发 | 1MB | 已裁 | 27 | 无公开链接 | 一般 |
+
+约束：
+
+- 图集**不**进 git、`pyproject.toml` 也不打包；CI 默认跳过（`pytest -m "not real_data"`）。
+- 集成测试加 `@pytest.mark.real_data`，由 `tests/integration/conftest.py` 在 `manifest.json` 缺失时自动 `pytest.skip()`。
+- AC-1 阈值先按 **软阈值**（precision ≥ 0.80 / recall ≥ 0.60 / B³ F1 ≥ 0.70）落地，避免小 fixture 抖动触发 CI 红；换上更大图集后再向合同阈值（0.95 / 0.85 / 0.90）收紧。
+- fixture 目录内自带 `NOTICE` 文件（CC-BY 4.0 attribution），与 pick-face 的 Apache-2.0 NOTICE 兼容（Apache §4(d) 显式保留 NOTICE 文本）。
 
 ## 4. 文档矩阵
 

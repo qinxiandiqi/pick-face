@@ -158,16 +158,22 @@ ignore_missing_imports = true
 minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Skip real-face tests by default — they require a dataset fetched via
+# `scripts/fetch_face_dataset.py`. Opt in with `-m real_data` (or
+# `--runxfail` style override) when the dataset is available.
 addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
     "--tb=short",
+    "-m",
+    "not real_data",
 ]
 markers = [
     "unit: unit tests (fast, no external deps)",
     "integration: integration tests (may hit filesystem)",
     "acceptance: acceptance tests (AC-1~AC-9)",
+    "real_data: real-face integration tests (skipped unless dataset fetched)",
     "slow: slow tests (>1s)",
 ]
 

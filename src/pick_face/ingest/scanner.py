@@ -31,6 +31,8 @@ from pick_face.core.hashing import HASH_HEX_LEN, content_hash
 # HEIC and RAW are behind extras; the scanner still lists them so glob'd
 # files aren't silently dropped — the downstream decoder will fail with a
 # clear "install pick-face[heic]" or similar hint.
+# .pgm / .pbm / .ppm are Pillow-supported PNM formats — included so the
+# real-face test fixture (AT&T/ORL/Olivetti ships 400 PGM frames) walks.
 DEFAULT_IMAGE_EXTS: frozenset[str] = frozenset(
     {
         ".jpg",
@@ -51,6 +53,9 @@ DEFAULT_IMAGE_EXTS: frozenset[str] = frozenset(
         ".raf",
         ".orf",
         ".rw2",
+        ".pgm",
+        ".pbm",
+        ".ppm",
     }
 )
 
