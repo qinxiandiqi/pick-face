@@ -8,7 +8,7 @@
 - **幂等可重入**：同一份输入多次运行结果一致；运行可中断/恢复。
 - **关注点分离**：`scan → detect → embed → cluster → link` 五阶段解耦，每阶段可独立替换。
 - **可观察**：每个阶段输出可校验中间产物；CLI 与 JSON 双格式进度。
-- **少依赖**：核心运行只依赖 numpy/Pillow/SQLite；ONNX 推理与聚类作为可选 extras。
+- **少依赖**：核心运行只依赖 numpy/Pillow/SQLite/opencv-python/onnxruntime；HDBSCAN/hnswlib 作为必装核心（聚类与 ANN）；`insightface` 在路线 B 后由 model pack 插件自带，不再进核心依赖。ONNX provider (CUDA/DirectML) 作为可选 extras。
 
 ## 2. 系统架构总览
 
@@ -70,7 +70,9 @@
 | `pick_face.output`    | `reporter`    | `src/pick_face/output/reporter.py`  | `report.md/json/html` |
 | `pick_face.output`    | `parallel`    | `src/pick_face/output/parallel.py`  | 进程池 + 进度汇报 |
 | `pick_face.platform`  | `runtime`     | `src/pick_face/platform/runtime.py` | ONNX provider probe、device 选择 |
-| `pick_face.platform`  | `models`      | `src/pick_face/platform/models.py`  | 模型下载/缓存、许可证门控 |
+| `pick_face.platform`  | `pack`        | `src/pick_face/platform/pack.py`    | `ModelPack` Protocol + `discover_packs()` entry-points loader（路线 B 新增）|
+| `pick_face.platform`  | `packs`       | `src/pick_face/platform/packs/`     | 内嵌 pack 实现（yunet-mfn 在内，未来 buffalo_sc 等）|
+| `pick_face.platform`  | `models`      | `src/pick_face/platform/models.py`  | 模型下载/缓存、许可证门控（LicenseClass 驱动）|
 | `pick_face.platform`  | `bench`       | `src/pick_face/platform/bench.py`   | 性能基准 |
 | `pick_face`           | `cli`         | `src/pick_face/cli.py`              | Typer 入口（保留在顶层） |
 | `pick_face`           | `__init__`    | `src/pick_face/__init__.py`         | 公共 API 重导出 |
@@ -201,7 +203,10 @@ $XDG_CACHE_HOME/pick-face/models/        # 默认 ~/.cache/pick-face/models
 ~/Library/Caches/pick-face/models/
 # Windows
 %LOCALAPPDATA%\pick-face\models\
-# 任意平台可用 INSIGHTFACE_HOME 指向本地模型根目录
+# 任意平台可用 PICK_FACE_MODEL_DIR 指向本地模型根目录
+# 路径布局: model_dir/<pack_id>/<file>.onnx
+#  例: ~/.cache/pick-face/models/yunet-mfn/face_detection_yunet_2023mar.onnx
+#      ~/.cache/pick-face/models/buffalo_l/det_10g.onnx (opt-in)
 ```
 
 ### 4.3 包内依赖方向
@@ -218,20 +223,29 @@ cli ──▶ config ──▶ scanner ──▶ images ──▶ detector ─�
                                                │
                                                ▼
                                              linker ──▶ reporter
+
+# 路线 B 新增：core 不再 import insightface / onnxruntime
+cli ──▶ pack.discover_packs() ──▶ pack.build_detector() / build_embedder()
+       (entry-points 加载)
+       ▼
+       Detector / Embedder (Protocol)
+       ▼
+       indexer (纯业务逻辑，不绑定任何 pack 实现)
 ```
 
 约束：
-- `detector` / `embedder` / `cluster` 只依赖 `index`（写入 + 读 face）；不直接读源目录。
-- `linker` 与 `reporter` 只读 `index`；不写 `face` 表。
-- `review` 写 `review_decision` 表，由 `cluster` 在下次 run 消费。
-- `cli` 是唯一允许 import `runtime`（模型下载）的入口，便于审计「网络 IO 调用点」。
+- `detector` / `embedder` / `cluster` 只依赖 `index`（写入 + 读 face）；不直接读源目录
+- `linker` 与 `reporter` 只读 `index`；不写 `face` 表
+- `review` 写 `review_decision` 表，由 `cluster` 在下次 run 消费
+- `cli` 是唯一允许 import `pack`（模型下载 + 插件发现）的入口，便于审计「网络 IO 调用点」与「插件入口」
+- **核心包不再依赖** `insightface` / `onnxruntime`（前者全移走，后者移至 pack 自带）
 
 ## 5. 数据流（一次完整 run）
 
 1. **Config 加载** —— 读 `pick-face.toml`、合并 CLI flag，校验源/输出目录。
 2. **Scan** —— 遍历所有 `--src`，按后缀白名单与 exclude glob 过滤；计算 `xxh3` content hash；与 `index` 比对决定 ADD/MOD/UNCHANGED/DEL。
 3. **Image Decode** —— 对 ADD/MOD 项做 EXIF 旋转 + 降采样到最大边 1600px（保留原图以备后续精细化）。
-4. **Detect & Embed** —— 调 `Detector.detect()` 得到 bbox+landmarks；`Aligner` 裁剪；`Embedder.embed()` 得 512 维向量并 L2 归一化。
+4. **Detect & Embed** —— 调 `Detector.detect()` 得到 bbox+landmarks；`Aligner` 裁剪；`Embedder.embed()` 得 128-D / 512-D 向量并 L2 归一化（维度由 pack 决定；`yunet-mfn` 是 128-D，`buffalo_l` / `buffalo_sc` 是 512-D，详见 [10 §2](10-model-stack.md)）。
 5. **Persist** —— 写入 `index.sqlite`：`source(id,path,hash,mtime)`、`face(id,source_id,bbox,landmarks,embedding,quality,cluster_id)`。
 6. **Cluster** —— 取出全部 embedding（已存在 + 新增），用人工约束（merge/split）更新后跑 HDBSCAN；写回 `face.cluster_id`。
 7. **Link** —— 根据 `face.cluster_id` 生成/更新 `output/<person-id>/<source-relative>` 软链接；多余链接进入待清理列表。
@@ -293,20 +307,21 @@ class Linker(Protocol):
 ## 7. CLI 命令（v0.1）
 
 ```
-pick-face init                # 生成默认 pick-face.toml
-pick-face init-models         # 下载 InsightFace buffalo_l（需 --allow-network）
-pick-face scan                # 扫描 + 写 source 表
-pick-face index               # 检测+嵌入
-pick-face cluster             # 聚类
-pick-face link                # 生成/更新软链接
-pick-face run                 # scan+index+cluster+link 一步执行
-pick-face report              # 输出 report.md
-pick-face review              # 启动交互式校正（TUI）
-pick-face review apply FILE   # 应用预先编辑的 review.json
-pick-face gc                  # 清理悬挂链接 + 过期缩略图
-pick-face prune               # 清理 _archive（v0.2）
-pick-face rollback --to ID    # 回滚到指定 run_id
-pick-face rebuild             # 强制全量重建
+pick-face init                          # 生成默认 pick-face.toml (pack = "yunet-mfn", Apache-2.0)
+pick-face init-models --pack yunet-mfn  # 下载 5 MB OpenCV Zoo 权重（需 --allow-network）
+pick-face scan                          # 扫描 + 写 source 表
+pick-face index                         # 检测+嵌入
+pick-face cluster                       # 聚类
+pick-face link                          # 生成/更新软链接
+pick-face run                           # scan+index+cluster+link 一步执行
+pick-face doctor                        # 列出已注册 model pack + license + 状态（路线 B 新增）
+pick-face report                        # 输出 report.md
+pick-face review                        # 启动交互式校正（TUI）
+pick-face review apply FILE             # 应用预先编辑的 review.json
+pick-face gc                            # 清理悬挂链接 + 过期缩略图
+pick-face prune                         # 清理 _archive（v0.2）
+pick-face rollback --to ID              # 回滚到指定 run_id
+pick-face rebuild                       # 强制全量重建
 ```
 
 ## 8. 进程模型与并行
@@ -368,18 +383,28 @@ pick-face rebuild             # 强制全量重建
 
 | extras | 关键依赖 | 何时安装 | 默认？ |
 |--------|---------|---------|--------|
-| `pick-face`（核心） | `numpy`, `Pillow`, `opencv-python`, `typer`, `rich`, `pydantic`, `xxhash`, `hnswlib`, `hdbscan`, `insightface`, `onnxruntime` | 始终 | ✅ |
+| `pick-face`（核心） | `numpy`, `Pillow`, `opencv-python`, `typer`, `rich`, `pydantic`, `xxhash`, `hnswlib`, `hdbscan`, `onnxruntime` (CPU) | 始终 | ✅ |
 | `[heic]` | `pillow-heif` | 用户声明 | ❌ |
 | `[raw]` | `rawpy`（含 libraw 绑定） | 用户声明 | ❌ |
 | `[gpu]` | `onnxruntime-gpu` | 用户声明（替换 `onnxruntime`） | ❌ |
 | `[gpu-cuda12]` | `onnxruntime-gpu==1.17.*` + 文档 `cuda==12.x` 校验脚本 | Linux + NVIDIA | ❌ |
 | `[gpu-directml]` | `onnxruntime-directml`（Windows） | Windows + 无 CUDA | ❌ |
+| `[insightface]` | `insightface>=0.7.3`（**路线 B 后 opt-in**，给 `pick-face-modelpack-insightface` 用）| 用户声明 | ❌ |
 | `[dev]` | `pytest`, `pytest-cov`, `pytest-benchmark`, `ruff`, `mypy`, `pre-commit`, `pip-audit` | 开发者 | ❌ |
-| `[all]` | 上述全部 | 全量自检 | ❌ |
+| `[all]` | `[heic,raw,gpu]` | 全量自检 | ❌ |
+
+**Model Pack 是独立包**（不在核心 wheel）：
+
+| 插件 | 依赖 | 何时装 | 默认？ |
+|---|---|---|---|
+| `pick-face-modelpack-yunet` | 走核心 `onnxruntime` | 始终（**核心包内置**，不需额外装）| ✅ |
+| `pick-face-modelpack-insightface` | `pick-face[insightface]` + `onnxruntime-gpu (可选)` | opt-in（要 buffalo_l/sc/antelopev2 时）| ❌ |
+| `pick-face-modelpack-my-arcface` (自训) | `onnxruntime` | 自训后 | ❌ |
 
 **互斥约束**：
-- `[gpu]` 与 `[gpu-directml]` 互斥；CI 在同一环境只装其一，缺则降级。
-- `[all]` 不强制安装 `[gpu]` 系列——GPU 仍需用户按硬件手动选。
+- `[gpu]` 与 `[gpu-directml]` 互斥；CI 在同一环境只装其一，缺则降级
+- `[all]` 不强制安装 `[gpu]` 系列——GPU 仍需用户按硬件手动选
+- **路线 B 核心包不安装 `insightface`**；老用户显式 `pip install 'pick-face[insightface]'` + 装 `pick-face-modelpack-insightface` 保留原行为
 
 **示例**（`pyproject.toml` 节选）：
 
@@ -441,12 +466,13 @@ uv pip sync requirements.lock
 
 | 形态 | 配置 | 用途 |
 |------|------|------|
-| 单一环境变量 | `INSIGHTFACE_HOME=/path/to/models` | 指向已下载的模型根目录 |
+| 单一环境变量 | `PICK_FACE_MODEL_DIR=/path/to/models` | 指向已下载的模型根目录 |
 | 配置项 | `[runtime] model_dir = "/srv/models"` | 项目级覆盖环境变量 |
+| 选定 pack | `[runtime] pack = "yunet-mfn"`（默认）/ `"buffalo_l"`（opt-in）| 决定权重文件名 + LicenseClass 驱动的 AC-9 行为 |
 | HTTP 镜像 | `[runtime] model_index_url = "https://internal.corp/models/"` | 内网部署；需 `--allow-network` |
 | 完全离线 | 不配置 + `uv pip install` 走内网 PyPI 镜像 | 全部资源本地化 |
 
-CI 中通过 `actions/cache` 缓存 `~/.insightface/models/`，避免每次 job 重新下载。
+CI 中通过 `actions/cache` 缓存 `model_dir/`，避免每次 job 重新下载。
 
 ### 11.6 发布
 
@@ -460,6 +486,7 @@ CI 中通过 `actions/cache` 缓存 `~/.insightface/models/`，避免每次 job 
 ### 11.7 不可变约束
 
 - **不引入**任何运行时依赖与 InsightFace / ONNX 无关的「重量级」库（PyTorch、TensorFlow）。
+- **不**让 `insightface` 出现在核心 wheel 的 `dependencies`（路线 B 后：`insightface` 是 `pick-face-modelpack-insightface` 插件的依赖）
 - **不**在核心 `requires-python` 中放 `numpy<2` 之类的硬约束；版本兼容性在 `requirements.lock` 中固定。
 - **不**用 `setup.py`；新代码只在 `pyproject.toml` 声明。
 - **不**默认安装 `[gpu]`；用户按硬件显式选择，避免 CPU 机器下载 CUDA 库失败。

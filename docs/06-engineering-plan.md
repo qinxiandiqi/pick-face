@@ -11,6 +11,7 @@
 | **M2 增量 + 校正** | 增量、review 子命令、HEIC 基础支持 | 1.5 周 | AC-3 / AC-5 通过 |
 | **M3 GPU + 性能** | GPU 加速、并行、长任务进度 | 1.5 周 | 1 万张 ≤ 1h（GPU） |
 | **M4 1.0** | 报告完善、文档、跨平台 CI、pip 打包 | 1 周 | 三个平台 smoke test 全过 |
+| **M5 路线 B** | Model Pack 插件架构 + 默认 `yunet-mfn` | 2 周 | Pi 3B 跑通 + AC-1 不降 + 商业零摩擦默认 |
 
 > 合计 6 周；可视团队规模与人力增减。
 
@@ -21,7 +22,7 @@
 - [ ] T-002 CLI 骨架（Typer）+ 14 个子命令：`init / init-models / scan / index / cluster / link / run / report / review / review apply / gc / prune / rollback / rebuild`（与 03 §7 / 08 §6.5 一致）
 - [ ] T-003 配置加载（toml，含 schema 校验 pydantic）+ 错误码；**含 `[runtime] accept_noncommercial_model_license: bool = False` 字段（fail-safe 默认；详见 11 §3.2）**
 - [ ] T-004 扫描器 + content hash（xxh3_64）+ 增量 diff + JSON 进度事件
-- [ ] T-005 InsightFace 集成（detector + embedder + aligner + warmup）
+- [ ] T-005 Model Pack 抽象：Detector/Embedder Protocol（v0.1 落 InsightFace 实现，路线 B 后抽象为 `pick_face.platform.pack`）
 - [ ] T-006 SQLite schema v0 + PRAGMA + 迁移框架 + WAL
 - [ ] T-007 HDBSCAN 聚类 + 簇质心二次合并 + 人工约束
 - [ ] T-008 软链接 / 回退（含 Windows junction 兜底）
@@ -54,6 +55,19 @@
 - [ ] T-304 PyPI 打包（`pyproject.toml` + `MANIFEST.in` + `uv build` + sdist/wheel 多平台 + `uv publish`）
 - [ ] T-305 发布 1.0 + 兼容性承诺
 
+### M5 路线 B：Model Pack 插件架构（详见 docs/14 + docs/13）
+
+- [ ] T-501 ModelPack Protocol + `discover_packs()` entry-points loader
+- [ ] T-502 脱钩 core：`insightface` / `onnxruntime` 移出默认依赖
+- [ ] T-503 `yunet-mfn` pack 落地（默认 Apache-2.0，5 MB 模型）
+- [ ] T-504 `pick-face-modelpack-insightface` 独立包（保留 buffalo_l/sc/antelopev2 走 NC-research 路径）
+- [ ] T-505 LicenseClass 驱动 AC-9 gate 改造
+- [ ] T-506 Pi 3B 实测通过（400 张 PGM < 60 min，AC-1 ≥ 0.85）
+- [ ] T-507 文档更新（[10](10-model-stack.md) / [11](11-commercial-compliance.md) / [13 新](13-raspberry-pi-support.md) / [14 新](14-model-pack-plugins.md) / AGENTS / README）
+- [ ] T-508 CI 新增 `test_arm_friendly_default.py`（守默认 pack 回归）
+- [ ] T-509 `pick-face doctor` 子命令：列出已注册 pack + license + 状态
+- [ ] T-510 v2.0.0 发布：CHANGELOG 写迁移说明，老用户 `pip install pick-face-modelpack-insightface` 保留原行为
+
 ## 3. 测试策略
 
 | 层级 | 内容 | 工具 |
@@ -71,6 +85,7 @@
 - `tests/fixtures/synth_faces/`: 用合成人脸图（小图 + 噪声）跑扫描/聚类，单测无需真模型。
 - `tests/fixtures/mock_insightface.py`: 实现 `FaceDetector`/`FaceEmbedder` Protocol，生成确定性的伪 embedding（基于图像内容的 hash），用于 CI smoke。
 - `tests/fixtures/real_faces/`: 真实人脸测试集（见 §3.3），**不进 git**，由 `scripts/fetch_face_dataset.py` 按需拉取。
+- `tests/fixtures/mock_pack/`: 实现一个 mock `ModelPack`（LicenseClass.PERMISSIVE），用于测试 `discover_packs()` / `require_compliance()` 逻辑（[14 §3](14-model-pack-plugins.md)），不依赖任何真模型。
 
 ### 3.2 CI 缓存
 
@@ -142,19 +157,10 @@ uv run pytest tests/integration/ -v -m real_data
 - 包管理：**统一使用 `uv`**（依赖解析 / lockfile / venv / 安装 / 发布），详见 [03 §11](03-architecture-design.md#11-包管理设计)。
 - 锁定：所有依赖在 `pyproject.toml` 中给约束区间；**生产构建**额外维护 `requirements.lock`（`uv pip compile` 生成，提交到仓），CI 与发布统一用 lockfile。
 - 关键三方库（写明大致版本下限，到 v0.1 时按 ABI/CUDA 兼容性细化）：
-  - `insightface>=0.7.3`（含 buffalo_l/sc）
-  - `onnxruntime>=1.17`（CPU）/ `onnxruntime-gpu>=1.17`（CUDA，可选）
-  - `opencv-python>=4.9`（图像解码）
-  - `Pillow>=10.0`（EXIF/转码）
-  - `pillow-heif>=0.16`（可选，extras `heic`）
-  - `rawpy>=0.18`（可选，extras `raw`）
-  - `numpy>=1.26`、`scipy>=1.11`
-  - `hnswlib>=0.7`（ANN 索引）
-  - `hdbscan>=0.8.33`（聚类）
-  - `typer>=0.12`、`rich>=13`（CLI）
-  - `pydantic>=2.6`（配置 schema 校验）
-  - `xxhash>=3.4`（content hash）
-  - `pytest>=8`、`pytest-benchmark`、`pytest-cov`（测试）
+  - **核心**：`numpy>=1.24`、`Pillow>=10.0`、`opencv-python>=4.9`、`typer>=0.12`、`rich>=13`、`pydantic>=2.6`、`xxhash>=3.4`、`hnswlib>=0.7`、`hdbscan>=0.8.33`、`onnxruntime>=1.17`（路线 B 后**只**装 onnxruntime，不强依赖 insightface）
+  - **Model Pack**（每个 pack 自带依赖，不进核心）：`yunet-mfn` → `onnxruntime + opencv-python`；`pick-face-modelpack-insightface` → `insightface + onnxruntime-gpu (可选)`
+  - **可选 extras**：`pillow-heif>=0.16`（heic）、`rawpy>=0.18`（raw）、`onnxruntime-gpu>=1.17`（gpu）、`onnxruntime-directml>=1.17`（gpu-directml）
+  - **dev**：`pytest>=8`、`pytest-cov`、`pytest-benchmark`、`ruff>=0.6`、`mypy>=1.10`、`pre-commit>=3.8`、`pip-audit>=2.7`、`types-Pillow`
 
 ### 7.2 extras 切分（与 [03 §11.2](03-architecture-design.md#11-包管理设计) 一致）
 
@@ -175,5 +181,9 @@ uv run pytest tests/integration/ -v -m real_data
 
 ### 7.4 模型与离线
 
-- `pick-face init-models`（默认走 InsightFace 模型下载器，可指向自托管 HTTP）需显式 `--allow-network`。
-- 离线安装文档：在 `docs/troubleshooting.md` 给出「下载 `.zip` → 解压到 `INSIGHTFACE_HOME`」步骤。
+- `pick-face init-models` 路线 B 后**必须指定 `--pack <pack_id>`**；走 pack 的 `download_to()` 拉权重
+- 默认 `pack = yunet-mfn` → 走 OpenCV Zoo GitHub release，5 MB
+- opt-in 装 `pick-face-modelpack-insightface` 后可用 `buffalo_l` / `buffalo_sc` / `antelopev2`
+- 完全离线：在 `model_dir/<pack_id>/` 预放 ONNX 文件，CLI 跳过下载
+- 离线安装文档：在 `docs/troubleshooting.md` 给出「下载 `.zip` → 解压到 `model_dir/<pack_id>/`」步骤
+- 详见 [10 §7](10-model-stack.md) + [13 §3 Pi 完整安装](13-raspberry-pi-support.md) + [14 §4 发布](14-model-pack-plugins.md)

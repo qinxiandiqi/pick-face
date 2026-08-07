@@ -9,11 +9,14 @@
 ```
 scan → detect → align → embed → persist → cluster(+二次合并) → link → report
    │       │       │      │        │             │                │       │
- 文件    InsightFace InsightFace InsightFace SQLite      HDBSCAN     软链接   Markdown
- 树     SCRFD 检测  5点仿射    ArcFace     权威     簇质心合并    原子切换  报告
+ 文件    model pack  ArcFace  model pack  SQLite    HDBSCAN      软链接   Markdown
+ 树     detector   5点仿射   embedder    权威     簇质心合并    原子切换   报告
+         (YuNet     纯几何   (MobileNet                │
+         /SCRFD)             /ArcFace)               │
+                       (默认 yunet-mfn / opt-in buffalo_l 等, 详见 10 §2 / 14)
 ```
 
-6 个核心阶段，2 个横切关注点（错误处理 + 进度事件）。`pick-face run` 串起来一次性执行；`scan / index / cluster / link / report` 子命令允许分步调试。
+6 个核心阶段，2 个横切关注点（错误处理 + 进度事件）。`pick-face run` 串起来一次性执行；`scan / index / cluster / link / report` 子命令允许分步调试。**detector / embedder 由 model pack 插件提供**（路线 B），不绑定任何具体实现 —— 详见 [10](10-model-stack.md) + [14](14-model-pack-plugins.md)。
 
 ---
 
@@ -32,10 +35,13 @@ pick-face run \
 1. `cli` 解析 Typer 参数；`config` 模块用 pydantic 校验 `pick-face.toml` + CLI flag 的合并结果。
 2. 启动 PRAGMA（`journal_mode=WAL`, `foreign_keys=ON` 等，见 [05 §2.1](05-data-and-storage.md)），打开 `<out>/.cache/index.sqlite`。
 3. 启动 hnswlib，载入 `<out>/.cache/faces.hnsw`（首次运行则为空索引）。
-4. 加载 `pick_face.platform.runtime` 中的 InsightFace 模型：
-   - 优先用 `INSIGHTFACE_HOME` 或 `[runtime] model_dir` 指向的本地目录；
-   - 否则（仅在 `--allow-network`）触发 `init-models` 下载逻辑；
-   - 失败抛 `ModelLoadError`（退出码 3，见 [03 §9](03-architecture-design.md)）。
+4. 加载 model pack（**路线 B 后不再写死 InsightFace**）：
+   - `pick_face.platform.pack.discover_packs()` 解析 `[runtime] pack` 对应的 entry-point
+   - 优先用 `PICK_FACE_MODEL_DIR` 或 `[runtime] model_dir` 指向的本地目录（路径布局 `model_dir/<pack_id>/<file>.onnx`）
+   - 否则（仅在 `--allow-network`）触发 `init-models --pack <id>` 下载逻辑
+   - pack 的 `LicenseClass.NC_RESEARCH` 时启动强校验 `accept_noncommercial_model_license`（详见 [11 §3.2](11-commercial-compliance.md)）
+   - 默认 `pack = "yunet-mfn"`（Apache-2.0，不需 ack）；opt-in `buffalo_l` 走 `pick-face-modelpack-insightface` 插件
+   - 失败抛 `ModelLoadError`（退出码 3，见 [03 §9](03-architecture-design.md)）
 5. 获取 `<out>/.lock` 文件锁，阻止多实例。
 6. 写一条 `run` 行（`started_at = now`, `mode = 'full' | 'incremental' | 'rebuild'`, `config_hash` = 配置文件 SHA256）。
 
@@ -97,7 +103,7 @@ class ScanDiff:
 
 **目标**：在 BGR 图上找到所有人脸的位置与关键点。
 
-**模型**：InsightFace 自带 **SCRFD-10G**（Sample and Computation Redistribution for Face Detection），SOTA 的轻量级检测器，输出 5 个关键点（左/右眼、鼻尖、左/右嘴角）。
+**模型**：由 model pack 决定。默认 `yunet-mfn` 用 **YuNet**（OpenCV Zoo，~363 KB）；opt-in `buffalo_l` 用 **SCRFD-10G**（InsightFace，16 MB）。两者都输出 5 个关键点（左/右眼、鼻尖、左/右嘴角），直接喂给 ArcFace 5-pt 对齐器。详见 [10 §2.1 / §2.2](10-model-stack.md)。
 
 **调用形态**（[02 §2.1 代码](02-technical-pre-research.md)）：
 
@@ -143,9 +149,9 @@ embedding   ndarray (512,)        # **已 L2 归一化**，可直接 cosine
 
 ## 6. 嵌入（embed）
 
-**目标**：把对齐后的 112×112 chip 映射到 512 维向量空间，使**同人相聚、异人相远**。
+**目标**：把对齐后的 112×112 chip 映射到 embedding 空间，使**同人相聚、异人相远**。
 
-**模型**：InsightFace 自带 **ArcFace (w600k_r50)**——在 MS-Celeb-1M 清洗后约 60 万人 / 190 万张图上预训练，使用 additive angular margin loss。LFW 99.78%+。
+**模型**：由 model pack 决定。默认 `yunet-mfn` 用 **MobileFaceNet INT8**（OpenCV Zoo，128-D，LFW 99.50%）；opt-in `buffalo_l` 用 **ArcFace w600k_r50**（InsightFace，512-D，LFW 99.83%）。详见 [10 §2.1 / §2.2](10-model-stack.md)。
 
 **数学本质**（为什么 ArcFace 强）：
 - 最后一层把 embedding 投影到 512 维单位球上（L2 归一化）。

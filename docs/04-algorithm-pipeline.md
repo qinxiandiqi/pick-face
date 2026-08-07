@@ -8,13 +8,13 @@
 原始图片
   │  (EXIF rotate, downsample to max-side 1600; RAW 先 EXIF thumbnail)
   ▼
-检测 (SCRFD / RetinaFace, det_thresh=0.5, det_size=640)
-  │  bbox, 5/68 landmarks
+检测 (YuNet / SCRFD, det_thresh=pack-tuned, det_size=320–640)
+  │  bbox, 5 landmarks
   ▼
 对齐 (相似变换 → 112×112)
   │  aligned chip
   ▼
-嵌入 (ArcFace w600k_r50, 512-D, L2-normalized = normed_embedding)
+嵌入 (MobileFaceNet 128-D / ArcFace 512-D, L2-normalized = normed_embedding)
   │
   ▼
 聚类 (HDBSCAN, cosine, with constraints) + 簇质心二次合并
@@ -23,36 +23,59 @@
 人物 (person_id) + 链接
 ```
 
-### InsightFace 流水线代码骨架
+### 路线 B 流水线代码骨架
+
+> 路线 B 后核心包不再 `import insightface`；detector / embedder 由 model pack 插件提供，详见 [14 §2](14-model-pack-plugins.md) 与 [10 §2.1](10-model-stack.md)。
+
+**默认 pack `yunet-mfn`（Apache-2.0）**：
 
 ```python
-from insightface.app import FaceAnalysis
-app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
-app.prepare(ctx_id=0, det_size=(640, 640))
-faces = app.get(cv2_image)  # 每张脸: bbox, kps, normed_embedding (512d), det_score
+from pick_face.platform.pack import discover_packs
+import cv2
+
+pack = discover_packs()["yunet-mfn"]            # entry-points 解析
+detector = pack.build_detector(model_dir)        # cv2.FaceDetectorYN (YuNet)
+embedder = pack.build_embedder(model_dir)        # MobileFaceNet INT8
+aligner = pack.build_aligner()                   # ArcFace 5-pt
+
+img = cv2.imread("photo.jpg")
+for det in detector.detect(img):
+    chip = aligner.warp(img, det.landmarks)      # 112x112 RGB
+    emb = embedder.embed(chip)                   # 128-D L2-normalized
+    # 写入 SQLite face 表
+```
+
+**opt-in pack `buffalo_l`（NC-research，需 `accept_noncommercial_model_license = true`）**：
+
+```python
+pack = discover_packs()["buffalo_l"]            # 需先装 pick-face-modelpack-insightface
+detector = pack.build_detector(model_dir, det_size=(640, 640))  # SCRFD-10G
+embedder = pack.build_embedder(model_dir)        # ArcFace w600k_r50 512-D
+# ... 业务代码同上
 ```
 
 要点：
-- `normed_embedding` 已 L2 归一化，**直接 cosine**。
-- `det_size=(640,640)` 召回高；(320,320) 更快但漏小脸。
-- 合影/极小脸：`det_score` 起步 0.5–0.6。
+- `normed_embedding` 已 L2 归一化，**直接 cosine**
+- `det_size=(640,640)` 召回高（`buffalo_l`）；`yunet-mfn` 默认 `(320,320)` 已经够用且 ARM 友好
+- 合影/极小脸：`det_score` 起步 0.5–0.6（不同 pack 阈值需 [detection] section 调）
 
 ## 2. 各阶段细节
 
 ### 2.1 检测
-- 模型：`buffalo_l`（高精度）或 `buffalo_sc`（速度优先）。
+- 模型：默认 `yunet-mfn`（Apache-2.0，Pi 3B 可跑）；opt-in `buffalo_l`（SCRFD-10G，高精度，个人/学术）；opt-in `buffalo_sc`（SCRFD-500MF，速度优先）。详见 [10 §2](10-model-stack.md)。
 - 输入：长边 ≤ 1600 的 BGR ndarray。
-- 阈值：`det_thresh=0.5`；阈值过低引入大量假脸；过高漏小脸。v0.1 起步 0.5。
-- 输出：`FaceBox(bbox=(x1,y1,x2,y2), score, landmarks=[(x,y)×5], age=None, gender=None)`。
+- 阈值：`det_thresh` 由 pack 决定；`yunet-mfn` 推荐 0.5（按真实数据集可调），`buffalo_l` 起步 0.5；阈值过低引入大量假脸，过高漏小脸。
+- 输出：`Detection(bbox=(x1,y1,x2,y2), det_score, landmarks=[(x,y)×5])`（`yunet-mfn` 不输出 age/gender）
 
 ### 2.2 对齐
-- 5 点关键点 → 112×112 仿射变换（参考 InsightFace 默认矩阵）。
-- 关键点置信度低的脸直接打 `quality<low>` 标记，但不剔除（v0.1 仍参与聚类）。
+- 5 点关键点 → 112×112 仿射变换（ArcFace 标准参考点；复用 [src/pick_face/ingest/align.py](../src/pick_face/ingest/align.py)，不依赖任何 pack）
+- 关键点置信度低的脸直接打 `quality<low>` 标记，但不剔除（v0.1 仍参与聚类）
 
 ### 2.3 嵌入
-- 输出 512 维 `np.ndarray`，L2 归一化（`embed /= np.linalg.norm(embed) + 1e-12`）。
-- 质量分（quality）由检测置信度 × 关键点分数 × 模糊度（Laplacian 方差）合成，范围 0–1。
-- `quality < 0.2` 的脸标记为 `low_quality`，不参与聚类但保留在 `face` 表（供 review）。
+- 输出维度由 pack 决定：`yunet-mfn` 128-D，`buffalo_l` / `buffalo_sc` 512-D
+- L2 归一化（`embed /= np.linalg.norm(embed) + 1e-12`）
+- 质量分（quality）由检测置信度 × 关键点分数 × 模糊度（Laplacian 方差）合成，范围 0–1
+- `quality < 0.2` 的脸标记为 `low_quality`，不参与聚类但保留在 `face` 表（供 review）
 
 ### 2.4 聚类
 - 算法：HDBSCAN，`metric='cosine'`，`min_cluster_size=3`，`min_samples=2`（[01 AC-1](01-product-requirement.md) 锁定为 2），`cluster_selection_method='leaf'`。

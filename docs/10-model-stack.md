@@ -1,18 +1,27 @@
 # 10 模型栈：人脸识别涉及哪些模型、为什么选它们
 
-> 文档版本：v0.1（评审稿） · 2026-07-30
-> 范围：把分散在 02/03/04/05/06/09 里的"模型 + 选型理由"集中收口。
-> 单一权威解读在 [08 §6 最终方案](08-review-notes.md)。
+> 文档版本：v0.2（路线 B 落地稿） · 2026-08-07
+> 范围：把分散在 02/03/04/05/06/09 里的"模型 + 选型理由"集中收口，按 **model pack** 维度组织。
+> **本文是单一权威解读**。任何与本文件冲突的章节（README / 01 / 03 / 06 / 08 / 09 / 11），以本文件为准。
+> 关联：[02 §2.1 库对比矩阵](02-technical-pre-research.md) · [11 §2 商业合规](11-commercial-compliance.md) · [13 Pi / ARM 支持](13-raspberry-pi-support.md) · [14-model-pack-plugins.md](14-model-pack-plugins.md)
 
-## 0. 摘要
+## 0. 摘要（60 秒版）
 
-`pick-face` 涉及**两类**模型：
-1. **机器学习模型**（GPU/CPU 推理）—— 5 个：SCRFD 检测、ArcFace 嵌入、AdaFace 备选、MediaPipe 备选、ONNX Runtime（推理框架而非模型）。
-2. **算法 / 数据结构**（不依赖训练好的神经网络）—— 3 个：hnswlib（ANN）、HDBSCAN（聚类）、xxh3（content hash）。本节一并说明它们为什么出现在栈里。
+`pick-face` 从 v2.0 起（路线 B）采用 **model pack 插件架构**：
 
-ML 模型默认全用 **InsightFace `buffalo_l`** 包（含 SCRFD-10G 检测 + 5 点关键点 + ArcFace w600k_r50 嵌入 + 性别/年龄属性），由 **ONNX Runtime** 跑。
+- **核心包** (`pick-face`) 通过 Python entry-points `pick_face.model_packs` 发现已安装的 model pack
+- **每个 pack** 是独立 PyPI 包，自带 detector + embedder + 权重 URL + SHA256 + license 声明
+- **默认 pack** 是 `yunet-mfn`（OpenCV Zoo YuNet + MobileFaceNet INT8，Apache-2.0）—— 让树莓派 3B 1 GB RAM 也能跑
+- **可选 pack** `buffalo_l` / `buffalo_sc` / `antelopev2` 来自 InsightFace，独立插件包，**默认不安装**
+- **AC-9 商业合规护栏**仍生效，但仅对 `LicenseClass.NC_RESEARCH` 的 pack 触发 —— `yunet-mfn` 默认放行
 
-## 1. 模型栈总览
+| Pack id | 体积 | RAM | LFW | LicenseClass | Pi 3B 1GB |
+|---|---|---|---|---|---|
+| **yunet-mfn**（默认） | **5 MB** | **150 MB** | 99.50% | PERMISSIVE | ✅ |
+| buffalo_sc (InsightFace) | 35 MB | 500 MB | 99.65% | NC_RESEARCH | ⚠️ |
+| buffalo_l (InsightFace) | 325 MB | 2.5 GB | 99.83% | NC_RESEARCH | ❌ |
+
+## 1. 模型栈总览（路线 B 视角）
 
 ```
                        ┌─────────────────────────────────────────────┐
@@ -21,15 +30,20 @@ ML 模型默认全用 **InsightFace `buffalo_l`** 包（含 SCRFD-10G 检测 + 5
                                        │           │           │
                 ┌──────────────────────┘           │           └────────────────────┐
                 ▼                                  ▼                                ▼
-         ① 图像解码                         ② 人脸检测                        ③ 人脸对齐
-   Pillow + pillow-heif + rawpy     InsightFace SCRFD-10G            InsightFace 内置 5点仿射
-   (纯算法, 无 ML)                   (buffalo_l 包含)                (确定性几何变换)
+         ① 图像解码                         ② Detector                       ③ Aligner
+   Pillow + pillow-heif + rawpy         (pack.build_detector)             (pack.build_aligner,
+   (纯算法, 无 ML)                       └─ SCRFD-10G (buffalo_l)              纯几何, 无 ML)
+                                          └─ SCRFD-500MF (buffalo_sc)              ArcFace 5-pt
+                                          └─ YuNet (yunet-mfn)               复用核心代码
 
                                        │
                                        ▼
-                                ④ 人脸嵌入
-                          InsightFace ArcFace w600k_r50
-                                (buffalo_l 包含)
+                                ④ Embedder
+                          (pack.build_embedder)
+                          └─ ArcFace w600k_r50 512-D (buffalo_l)
+                          └─ MobileFaceNet 512-D (buffalo_sc)
+                          └─ MobileFaceNet INT8 128-D (yunet-mfn)
+
                                        │
                                        ▼
                                 ⑤ 模糊度评估
@@ -51,215 +65,244 @@ ML 模型默认全用 **InsightFace `buffalo_l`** 包（含 SCRFD-10G 检测 + 5
                               xxh3_64 (无 ML)
 ```
 
-## 2. ML 模型（神经网络）
+**关键变化**：②③④ 三个模块在 v1.x 是固定 InsightFace 实现；v2.0 起通过 `pick_face.platform.pack.discover_packs()` 加载任意已注册的 pack，业务代码**完全不变**。
 
-### 2.1 InsightFace `buffalo_l`（默认） / `buffalo_sc`（`--fast`）
+## 2. Model Pack 列表
 
-**是什么**：
-InsightFace 官方打包的一组预训练 ONNX 模型，名字叫"水牛"。`buffalo_l` = SCRFD-10G 检测 + 5 点关键点定位 + ArcFace(w600k_r50) 嵌入 + 年龄/性别属性头。`buffalo_sc` = 同样的组件但用更轻量骨干（mobilefacenet/mobilenet），速度优先。
+### 2.1 `yunet-mfn`（默认 / Apache-2.0）
 
-**文件大小**：
-- `buffalo_l`：检测 ~92 MB + 嵌入 ~261 MB ≈ 350 MB
-- `buffalo_sc`：合计约 100 MB
+**Detector**：YuNet (`face_detection_yunet_2023mar.onnx`)
+- **来源**：OpenCV Zoo — https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet
+- **作者**：ShiqiYu, et al. (2022)
+- **论文**：[YuNet: A Tiny Millisecond-level Face Detector](https://github.com/ShiqiYu/OpenSFD)
+- **体积**：~363 KB
+- **输入**：任意尺寸 BGR ndarray
+- **输出**：每张图若干 `(x, y, w, h, *5 landmarks, score)` 行
+- **Pi 3B 推理**：~150 ms / 图（Cortex-A53 NEON）
 
-**为什么是它**（[02 §2.1](02-technical-pre-research.md) 选型矩阵）：
+**Embedder**：MobileFaceNet INT8 (`face_recognition_mobilefacenet_20221220_int8.onnx`)
+- **来源**：OpenCV Zoo — https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_mobilefacenet
+- **作者**：WuZhen, InsightFace 训练（2020），OpenCV Zoo 量化（2022）
+- **论文**：[MobileFaceNets: Efficient CNNs for Accurate Real-Time Face Verification on Mobile Devices](https://arxiv.org/abs/1804.07573)
+- **体积**：~5 MB（INT8 量化版）
+- **输入**：112×112 BGR float32 in [-1, 1]
+- **输出**：128-D float32 (L2-normalized)
+- **LFW 精度**：99.50%（INT8 量化后）
 
-| 维度 | InsightFace buffalo_l | face_recognition (dlib) | DeepFace wrapper | OpenCV DNN + 自拼 | MediaPipe |
-|------|----------------------|------------------------|------------------|------------------|-----------|
-| 准确率（LFW） | 99.78%+ | 99.38% | 视 backend | 视模型 | 仅检测/关键点 |
-| 维护活跃度 | 高，2024–2026 仍在出权重 | 长期低活跃；Py 3.11/3.12 缺 wheel | 活跃 | 散落 | 高 |
-| 部署难度 | 中（首次需联网下载 ONNX） | 高（dlib 编译链 Win/AS/Linux 都踩坑） | 低 | 高 | 低 |
-| 许可证 | 代码 MIT / **模型非商业研究** | MIT + Boost | MIT + 视 backend | Apache-2.0 | Apache-2.0 |
-| 离线能力 | ✅（自托管 ONNX） | ✅ | ⚠（每次新会话可能下载） | ✅ | ✅ |
-| 跨平台 | CPU/CUDA/DirectML/TensorRT | 受限于 dlib | 多 backend | 自拼 | 全 |
+**为什么是它**（[02 §2.1](02-technical-pre-research.md) + [13 §2](13-raspberry-pi-support.md) 选型矩阵）：
 
-**结论**：在「离线 + 跨平台 + 高准确率 + 可替换接口」四点上同时胜出，**MVP 唯一主线**。
+| 维度 | yunet-mfn | buffalo_l | buffalo_sc |
+|---|---|---|---|
+| 体积 | **5 MB** | 325 MB | 35 MB |
+| RAM 常驻 | **150 MB** | 2.5 GB | 500 MB |
+| Pi 3B 跑 | **✅** | ❌ | ⚠️ |
+| LFW 精度 | 99.50% | 99.83% | 99.65% |
+| License | **Apache-2.0** | NC-research | NC-research |
+| 商用零摩擦 | **✅** | ❌ | ❌ |
+| AC-9 gate | **不触发** | 触发 (要 ack) | 触发 (要 ack) |
+| 5-pt landmark | YuNet 自带 | InsightFace 2d106det (16 MB) | 同上 |
+| 维度 | 128-D | 512-D | 512-D |
+| ARM NEON | ✅ (INT8 SDOT) | ⚠️ 仅 ONNX ARM64 | ✅ |
 
-**可替换性**：v0.1 通过 [03 §5 `FaceDetector` / `FaceEmbedder` Protocol](03-architecture-design.md) 抽象，未来要换 AdaFace / MobileFaceNet / 自训模型只需实现 Protocol，无需改业务代码（[ADR-001](07-risk-and-decisions.md)）。
+**结论**：LFW 掉 0.33 pp 换来 **Pi 3B 能跑 + 商用零摩擦 + 100× 体积减小**，对个人照片整理场景**绝对划算**。
 
-### 2.2 SCRFD-10G（buffalo_l 内的检测器）
+### 2.2 `buffalo_l`（InsightFace / NC-research，opt-in）
 
-**是什么**：InsightFace 2021 年发布的检测器，**S**ample and **C**omputation **R**edistribution for **F**ace **D**etection。论文：https://arxiv.org/abs/2105.04714
+**Detector**：SCRFD-10G (`det_10g.onnx`)
+- **论文**：[Sample and Computation Redistribution for Efficient Face Detection](https://arxiv.org/abs/2105.04714)
+- **体积**：16 MB
+- **优点**：WIDER FACE hard subset 第一；带 5-pt landmark
 
-**为什么用它**（不是 RetinaFace、MTCNN、YOLO-face、MediaPipe BlazeFace）：
-- **精度 SOTA** 在 WIDER FACE 三个子集（easy / medium / hard）均第一。
-- **轻量**：10G FLOPs 的版本在 CPU 上也能跑（100~200ms/图）。
-- **输出带 5 个关键点**（双眼、鼻尖、嘴角）—— 下游 ArcFace 对齐直接用，省一个模型。
-- **ONNX 友好**：InsightFace 官方已转好；可纯本地运行。
+**Embedder**：ArcFace w600k_r50 (`w600k_r50.onnx`)
+- **论文**：[ArcFace: Additive Angular Margin Loss for Deep Face Recognition](https://arxiv.org/abs/1801.07698)
+- **体积**：166 MB
+- **输入**：112×112 RGB float32 in [-1, 1]
+- **输出**：512-D float32 (L2-normalized)
+- **训练**：MS-Celeb-1M 清洗后 ~60 万人 / ~190 万张
+- **LFW 精度**：99.83%
 
-**输入**：BGR ndarray + 检测尺度 `det_size`（默认 640×640）。
-**输出**：每张图若干 `bbox + 5 kps + det_score`。
+**为什么用它**（在 x86-64 + NVIDIA GPU 上仍然是精度天花板）：
 
-**替代 / 兜底**：
-- `buffalo_sc` 用更小骨干（mobilenet 系）做 `--fast` 选项。
-- v0.2 评估 MediaPipe BlazeFace 作大图（>4K）兜底（更快但无 5 点关键点，得自己接 landmark 模型）。
+- **精度 SOTA**：LFW / CALFW / CPLFW / IJB-C 上长期领先
+- **InsightFace 包装完善**：与 SCRFD 同包
+- **缺点**：体积大 / RAM 多 / NC-research license / 在 ARM 上弱
 
-### 2.3 ArcFace w600k_r50（buffalo_l 内的嵌入）
+### 2.3 `buffalo_sc`（InsightFace / NC-research，opt-in）
 
-**是什么**：InsightFace 2018 年提出的损失函数 + 配套骨干。在 MS-Celeb-1M 清洗后的 ~60 万人 / ~190 万张图上预训练，骨干是 ResNet-50。
-- 论文：https://arxiv.org/abs/1801.07698
-- 输出 512 维 L2 归一化向量。
+**Detector**：SCRFD-500MF (`det_500m.onnx`)
+- **体积**：~1.3 MB
+- **优点**：体积小，精度 ~99.65% LFW
+- **缺点**：仍是 InsightFace，license 同样 NC-research
 
-**为什么用它**（不是 FaceNet、VGG-Face、CosFace、SphereFace、AdaFace）：
-- **几何清晰**：训练时强制同人在单位球上的夹角 ≥ 某角度（m），不同人的夹角 ≤ 另一角度（m+α）。推理时直接 cosine 即可。
-- **大预训练集**：w600k（60 万人）是当时公开最大；今天仍是。
-- **OnPar 性能** 在 LFW、CALFW、CPLFW、IJB-C 上长期领先或并列第一。
-- **InsightFace 包装完善**：与 SCRFD 同包，无缝拼接。
+**Embedder**：MobileFaceNet (`w600k_mbf.onnx`)
+- **体积**：~16 MB
+- **输出**：512-D
 
-**输入**：112×112 RGB 对齐人脸。
-**输出**：512-D float32 向量（**已 L2 归一化**）。
+**为什么用它**：在 Pi 4B 4 GB / RK3588 / x86 上能跑的"老牌小 pack"，但商用仍然被 InsightFace license 卡。
 
-**替代 / 兜底**：
-- **AdaFace**（ICCV 2022）：对低质量人脸更鲁棒，可作 v0.2 升级选项（需自转 ONNX）。
-- **MobileFaceNet**：极小（~5MB），适合嵌入式 / 端侧；v0.1 不考虑。
-- **ArcFace-R100 / R200**：更大骨干，准确率略高但 CPU 推理 1.5–2× 慢；v0.1 不考虑。
+### 2.4 `antelopev2`（InsightFace / NC-research，opt-in）
 
-### 2.4 MediaPipe Face Detection（v0.2 备选，不在 v0.1 流水线）
+跟 buffalo_l/sc 类似但抗遮挡更强；体积 ~180 MB；商用 license 同样 NC-research。
 
-**为什么提它**：当输入是超大图（手机 RAW 50MP、扫描件）和要快速粗筛时，BlazeFace 极快。**v0.1 不引入**；若 v0.2 评估发现 RAW 解码是瓶颈再补。
+### 2.5 自训 pack（商业首选）
 
-### 2.5 ONNX Runtime（推理框架，非模型）
+```toml
+[runtime]
+pack = "my-arcface-r50"   # 你自己训的
+model_dir = "/srv/models/commercial"
+```
 
-**为什么是它**（不是直接用 PyTorch / TensorFlow / TensorRT 独占）：
-- **多 EP**：同一份 ONNX 能在 CPU / CUDA / DirectML / TensorRT / ROCm 上跑，**用户机器差异被 ONNX EP 抽象掉**。
-- **跨平台 wheel**：Linux/macOS/Windows、x86_64/arm64 都有官方预编译。
-- **轻量**：相比 PyTorch ~800MB、TF ~500MB，ONNX Runtime CPU 仅 ~25MB。
-- **InsightFace 官方支持**：`providers=["CPUExecutionProvider" | "CUDAExecutionProvider" | ...]`。
+详见 [11 §2.2 选项 A](11-commercial-compliance.md)。自训权重一般是 `LicenseClass.PERMISSIVE`（看你训练数据的 license），由你控制 license。
 
-**EP 选型**（[05 §4.2 权威表](05-data-and-storage.md)）：
+## 3. ONNX Runtime（推理框架，非模型）
 
-| 平台 | 首选 EP | 备选 |
-|------|---------|------|
-| Windows + NVIDIA | CUDA / TensorRT | DirectML |
-| Windows 无 NVIDIA | DirectML | CPU(MLAS) |
-| Linux + NVIDIA | CUDA / TensorRT | CPU |
-| macOS Apple Silicon | CPU | CoreML（需自绑） |
-| Linux + AMD | ROCm / MIGraphX | CPU |
+**为什么是它**（不是 PyTorch / TensorFlow / TensorRT 独占）：
+
+- **多 EP**：同一份 ONNX 能在 CPU / CUDA / DirectML / TensorRT 上跑，**用户机器差异被 ONNX EP 抽象掉**
+- **跨平台 wheel**：Linux/macOS/Windows、x86_64/arm64 都有官方预编译
+- **轻量**：相比 PyTorch ~800MB、TF ~500MB，ONNX Runtime CPU 仅 ~25 MB
+- **pack 自带依赖**：核心包不再 `import onnxruntime`，**每个 pack 自己声明依赖**
+
+**EP 选型**：
+
+| 平台 | 首选 EP | 备选 | Pack 需声明 |
+|---|---|---|---|
+| Windows + NVIDIA | CUDA / TensorRT | DirectML | `onnxruntime-gpu` |
+| Windows 无 NVIDIA | DirectML | CPU | `onnxruntime-directml` |
+| Linux + NVIDIA | CUDA / TensorRT | CPU | `onnxruntime-gpu` |
+| macOS Apple Silicon | CPU (NEON) | CoreML (自绑) | `onnxruntime` |
+| **ARM Linux (Pi / RK3588)** | **CPU (NEON)** | NPU (M6+) | `onnxruntime` |
+| Linux + AMD | ROCm / MIGraphX | CPU | `onnxruntime-gpu` |
 
 `--provider auto` 探测顺序：`cuda` → `directml` → `cpu`，失败链路在 `report.md` 顶部 `Warnings` 列出。
 
-## 3. 算法 / 数据结构（不依赖神经网络）
+## 4. 算法 / 数据结构（不依赖神经网络）
 
 虽然不是 ML 模型，但同样出现在人脸识别流程里、影响准确率与性能。
 
-### 3.1 hnswlib（ANN 索引）
+### 4.1 hnswlib（ANN 索引）
 
-**是什么**：Hierarchical Navigable Small World 图的 C++ 实现 + Python 绑定。**不是 ML**，是"在百万级向量里找最近邻"的近似算法。
+**是什么**：Hierarchical Navigable Small World 图的 C++ 实现 + Python 绑定。
 
-**为什么用它**（不是 FAISS / Annoy / scikit-learn NearestNeighbors）：
-- **轻量**：纯 C++，单 .so/wheel，无 CUDA 强依赖；Win/macOS/Linux 都有预编译。
-- **速度快**：1 万次 query 在 10 万 512-D 向量上 < 50ms。
-- **持久化**：可直接 `save_index` / `load_index` 到磁盘（[05 §3](05-data-and-storage.md)）。
-- **可增量更新**：`add_items` 追加、`mark_deleted` 软删。
+**为什么用它**：
+- **轻量**：纯 C++，单 .so/wheel
+- **速度快**：1 万次 query 在 10 万 512-D 向量上 < 50ms
+- **持久化**：可直接 `save_index` / `load_index`
+- **可增量更新**：`add_items` 追加、`mark_deleted` 软删
 
 **在本项目的作用**：
-- HDBSCAN 距离矩阵构造（[04 §2.4](04-algorithm-pipeline.md)）：n² 内存爆炸 → 用 hnswlib 取 top-50 近邻构图。
-- 增量分配（[04 §2.4](04-algorithm-pipeline.md)）：新脸与现有质心比对不用全表扫。
+- HDBSCAN 距离矩阵构造：n² 内存爆炸 → 用 hnswlib 取 top-50 近邻构图
+- 增量分配：新脸与现有质心比对不用全表扫
 
 **备选**：Annoy（更慢但更易调试）、FAISS（生态最全但 wheel 体积大）。
 
-### 3.2 HDBSCAN（层次密度聚类）
+### 4.2 HDBSCAN（层次密度聚类）
 
-**是什么**：基于层次密度估计 + 簇稳定度选阈值的无监督聚类算法。论文：https://link.springer.com/article/10.1007/s10994-013-5422-0
+**是什么**：基于层次密度估计 + 簇稳定度选阈值的无监督聚类算法。
 
-**为什么用它**（不是 k-means / DBSCAN / 谱聚类 / 凝聚层次）：
-- **无需指定 k**（人数未知，符合"按人整理"场景）。
-- **对密度变化鲁棒**（家庭合影中既有大头照又有远景小脸）。
-- **能标噪声**（-1 标签直接进 `_review/`）。
-- **可注入人工约束**（[04 §2.4 must_link/cannot_link](04-algorithm-pipeline.md)）。
+**为什么用它**：
+- **无需指定 k**（人数未知，符合"按人整理"场景）
+- **对密度变化鲁棒**（家庭合影中既有大头照又有远景小脸）
+- **能标噪声**（-1 标签直接进 `_review/`）
+- **可注入人工约束**（must_link/cannot_link）
 
 **参数**（[04 §3.1 阈值表](04-algorithm-pipeline.md)）：
 - `min_cluster_size=3`（单人也保留簇需要降到 2）
-- `min_samples=2`（[01 AC-1](01-product-requirement.md) 锁定）
+- `min_samples=2`
 - `metric='cosine'`
-- `cluster_selection_method='leaf'`（更细粒度，便于二次合并救回）
+- `cluster_selection_method='leaf'`
 
-### 3.3 xxh3_64（content hash）
+**维度差异**：yunet-mfn 输出 128-D，buffalo_l/sc 输出 512-D。HDBSCAN 对维度不敏感，但 cosine 阈值在不同维度下数值意义不同。**`yunet-mfn` 的 merge_threshold = 0.55 是默认；用 buffalo_l 时调到 0.45 更稳**（[04 §3.1 调整表](04-algorithm-pipeline.md)）。
 
-**是什么**：Yann Collet 设计的非加密极快哈希，64-bit 版本。**不是 ML**，是"两个文件是不是字节级一致"的判定。
+### 4.3 xxh3_64（content hash）
 
-**为什么用它**（不是 SHA-256 / MD5）：
-- **快**：单核 ≥ 10 GB/s；扫 1 万张图 1 秒内出 hash。
-- **64-bit 足够**：用作幂等键，**碰撞概率可忽略**（50% 碰撞需要 ~50 亿文件）。
-- **Python 原生绑定**：`xxhash` 包。
+**是什么**：Yann Collet 设计的非加密极快哈希，64-bit 版本。
 
-**在本项目的作用**：[03 §5 数据流](03-architecture-design.md) 的幂等键 `(abs_path, size, mtime, hash)`；快速判定"是不是同一图"。
+**为什么用它**：
+- **快**：单核 ≥ 10 GB/s；扫 1 万张图 1 秒内出 hash
+- **64-bit 足够**：用作幂等键，碰撞概率可忽略
+- **Python 原生绑定**：`xxhash` 包
 
-### 3.4 Laplacian 方差（模糊度）
+**在本项目的作用**：幂等键 `(abs_path, size, mtime, hash)`；快速判定"是不是同一图"。
 
-**是什么**：图像二阶导数的方差，>100 算清晰，< 20 算糊。**不是 ML**，是经典图像质量度量。
+### 4.4 Laplacian 方差（模糊度）
 
-**为什么用它**（不引 CNN 质量模型）：
-- **零成本**：opencv 1 行代码。
-- **可解释**：调参人员一眼看懂。
-- **足够好**：作为 `quality = f(det_score, kps_residual, blur)` 的一个分量。
+**是什么**：图像二阶导数的方差，>100 算清晰，< 20 算糊。
 
-**替代**：v0.2 评估 BRISQUE / NIMA 等学习型质量模型，但收益不一定值得引入新依赖。
+**为什么用它**：
+- **零成本**：opencv 1 行代码
+- **可解释**：调参人员一眼看懂
+- **足够好**：作为 `quality = f(det_score, kps_residual, blur)` 的一个分量
 
-## 4. 许可与合规
+## 5. 许可与合规
 
-| 模型 / 库 | 许可证 | 商业可用？ |
-|----------|--------|-----------|
-| InsightFace 代码 | MIT | ✅ |
-| InsightFace `buffalo_*` 模型权重 | **非商业研究用途** | ❌（README 顶明记） |
-| ONNX Runtime | MIT | ✅ |
-| hnswlib | Apache-2.0 | ✅ |
-| HDBSCAN | BSD | ✅ |
-| Pillow / OpenCV / NumPy | HPND / Apache-2.0 / BSD | ✅ |
-| pillow-heif | BSD | ✅ |
-| rawpy (LibRaw) | LGPL + LibRaw 许可 | ⚠ 视使用方式 |
-| xxhash | BSD | ✅ |
-| face_recognition (备选) | MIT | ✅ |
+| Pack / 库 | 许可证 | 商业可用 | AC-9 gate |
+|---|---|---|---|
+| **yunet-mfn**（OpenCV Zoo） | **Apache-2.0** | **✅** | 不触发 |
+| buffalo_l / buffalo_sc / antelopev2 权重 | InsightFace 自定义 | ❌ | 触发 |
+| onnxruntime | MIT | ✅ | — |
+| hnswlib | Apache-2.0 | ✅ | — |
+| HDBSCAN | BSD | ✅ | — |
+| Pillow / OpenCV / NumPy / xxhash | HPND / Apache-2.0 / BSD | ✅ | — |
+| pillow-heif | BSD | ✅ | — |
+| rawpy (LibRaw) | LGPL + LibRaw 许可 | ⚠ 视使用方式 | — |
+| face_recognition (备选) | MIT | ✅ | — |
 
-**pick-face 主包建议许可**：Apache-2.0。模型许可与代码许可解耦，README 顶部明记「默认不联网 + 模型来源 + 非商用提示」（[01 §6](01-product-requirement.md)）。
+**默认 pack 已经是 Apache-2.0** —— pick-face 项目**不**分发 `yunet-mfn` 权重（5 MB onnx 不入仓），但**整个核心包不再诱导用户使用 NC-research 模型**。LICENSE / README 顶部明记"默认商用合规"。
 
-> 📌 **商业部署的完整路径（含自训脚本、合规配置、检测项）见 [11-commercial-compliance.md](11-commercial-compliance.md)**。本文仅给技术选型与许可事实，合规边界、用户义务、配置项语义由 11 单一权威。
+> 📌 **商业部署的完整路径（含自训脚本、合规配置、检测项）见 [11-commercial-compliance.md](11-commercial-compliance.md)**。本文仅给技术选型与许可事实。
 
-## 5. 模型版本与升级策略
+## 6. Model 版本与升级策略
 
-- **版本字段**：在 `face` 表加 `model_version`（如 `"buffalo_l@2023-11"`），embedding 不兼容时**重算**而不是混用。
-- **升 buffalo_l**：改 pyproject 依赖 + 写一条 migration 把 `face` 表 `model_version != 当前` 全部重算（`pick-face reindex --model buffalo_l`）。
-- **换模型族**（如换 AdaFace）：直接重算全部 `face.embedding`，**不动 SQLite schema**（BLOB 不变）。
-- **双轨验证期**：新模型与旧模型并行跑 1 周，B³ F1 在 demo 集上不降才能切默认（[04 §5 评测方法](04-algorithm-pipeline.md)）。
-
-## 6. 模型总成本与体积
-
-| 项 | 体积 | 备注 |
-|----|------|------|
-| `buffalo_l` 检测 | ~92 MB | 一次性下载 |
-| `buffalo_l` 嵌入 | ~261 MB | 一次性下载 |
-| `buffalo_sc` | ~100 MB | 一次性下载（备选） |
-| `onnxruntime` (CPU) | ~25 MB | 走 pip |
-| `onnxruntime-gpu` | ~250 MB | 走 pip（CUDA 库另需 ~3GB） |
-| **首次安装合计** | **~600 MB（CPU）/ ~4 GB（GPU）** | — |
+- **版本字段**：`face.model_version` 形如 `"yunet-mfn@2026-08"` 或 `"buffalo_l@2023-11"`，embedding 不兼容时**重算**而不是混用
+- **换 pack**：跑 `pick-face rebuild --pack <new_pack>`，写一条 migration 把 `face.model_version != 当前` 全部重算
+- **双轨验证期**：新 pack 与旧 pack 并行跑 1 周，B³ F1 在 demo 集上不降才能切默认（[04 §5 评测方法](04-algorithm-pipeline.md)）
 
 ## 7. 模型下载与离线部署
 
-**在线**（[03 §11.5](03-architecture-design.md)）：
-```
-pick-face init-models --allow-network   # 触发 InsightFace 下载器
+**在线**：
+```bash
+pick-face init-models --pack yunet-mfn --allow-network --yes
+# 拉 ~5 MB from GitHub release
 ```
 
 **离线**（4 种部署形态）：
-1. `INSIGHTFACE_HOME=/srv/models` 环境变量。
+1. 环境变量：`PICK_FACE_MODEL_DIR=/srv/models`。
 2. `pick-face.toml` 的 `[runtime] model_dir = "/srv/models"`。
-3. 内网 HTTP 镜像：`[runtime] model_index_url = "https://internal.corp/models/"`。
-4. 完全离线：所有资源本地化（pip 镜像 + 模型文件 + extras 离线安装）。
+3. 内网 HTTP 镜像（自部署 pick-face-pack-registry）。
+4. 完全离线：所有资源本地化。
 
-CI 用 `actions/cache` 缓存 `~/.insightface/models/`，避免每次 job 重新下载。
+CI 用 `actions/cache` 缓存 `model_dir/`，避免每次 job 重新下载。
 
-> ⚠ **商业部署警告**：CI 缓存会让 `buffalo_l` 长期驻留在 CI runner 缓存里——**发布到公开 PyPI / 公开 docker 镜像前，务必清空** `~/.insightface/`、`pick-face` 容器内一切 `*.onnx`。详见 [11 §3.7 文档显眼位置](11-commercial-compliance.md)。
+> ⚠ **商业部署警告**：CI 缓存会让 `*.onnx` 长期驻留在 CI runner 缓存里——**发布到公开 PyPI / 公开 docker 镜像前，务必清空** `model_dir`、容器内一切 `*.onnx`。详见 [11 §3.7](11-commercial-compliance.md)。
 
-## 8. 引用与延伸阅读
+## 8. 模型总成本与体积（v2.0 默认安装）
 
-- [02 技术预研 §2.1](02-technical-pre-research.md) — 库对比矩阵
-- [04 算法流水线 §2](04-algorithm-pipeline.md) — 检测/对齐/嵌入/聚类参数
-- [05 数据与存储 §3](05-data-and-storage.md) — HNSW 同步与崩溃恢复
-- [07 ADR-001/002/006/009](07-risk-and-decisions.md) — InsightFace / HDBSCAN / 进程模型 / SQLite 权威
-- [09 人脸识别流程](09-face-recognition-pipeline.md) — 模型出现在哪个阶段
-- InsightFace python-package — https://github.com/deepinsight/insightface/blob/master/python-package/README.md
+| 项 | 体积 | 备注 |
+|---|---|---|
+| `pick-face` 核心 wheel | ~3 MB | 不含 onnxruntime |
+| `onnxruntime` (CPU) | ~25 MB | 走 pip |
+| `yunet-mfn` 权重 | **~5 MB** | 运行时下载 |
+| **`pip install pick-face` 合计** | **~30 MB** | — |
+| `onnxruntime-gpu` (可选) | ~250 MB | 走 pip（CUDA 库另需 ~3GB） |
+| `pick-face-modelpack-insightface` 插件 | ~5 MB | 仅作 Python 适配层；权重另下 |
+| `buffalo_l` 权重 (opt-in) | ~325 MB | 单独下载；仅个人/研究 |
+
+## 9. 引用与延伸阅读
+
+- [02 §2.1 库对比矩阵](02-technical-pre-research.md)
+- [04 §2 检测/对齐/嵌入/聚类参数](04-algorithm-pipeline.md)
+- [05 §3 HNSW 同步与崩溃恢复](05-data-and-storage.md)
+- [07 ADR-001/002/006/009](07-risk-and-decisions.md) — HDBSCAN / 进程模型 / SQLite 权威
+- [09 人脸识别流程](09-face-recognition-pipeline.md)
+- [11 §2.2 商业合规四条路径](11-commercial-compliance.md)
+- [13 Pi / ARM 支持](13-raspberry-pi-support.md)
+- [14-model-pack-plugins.md](14-model-pack-plugins.md) — 插件契约
 - SCRFD 论文 — https://arxiv.org/abs/2105.04714
 - ArcFace 论文 — https://arxiv.org/abs/1801.07698
+- YuNet 项目 — https://github.com/ShiqiYu/OpenSFD
+- MobileFaceNet — https://arxiv.org/abs/1804.07573
+- OpenCV Zoo — https://github.com/opencv/opencv_zoo
 - ONNX Runtime EPs — https://onnxruntime.ai/docs/execution-providers/
 - HDBSCAN docs — https://hdbscan.readthedocs.io/
 - hnswlib — https://github.com/nmslib/hnswlib
