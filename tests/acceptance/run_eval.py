@@ -71,7 +71,12 @@ def _load_truth(path: Path) -> dict[str, str]:
 
 
 def _load_pairs(db: Path) -> list[tuple[str, int]]:
-    """Return list of (rel_path, cluster_id_or_None) per face row."""
+    """Return list of (rel_path, cluster_id_or_None) per face row.
+
+    rel_path is normalized to forward-slash so the truth-CSV lookup
+    succeeds across Windows / POSIX (DB stores the OS-native separator
+    while the CSV is usually hand-written with `/`).
+    """
     con = sqlite3.connect(str(db))
     try:
         rows = con.execute(
@@ -80,7 +85,12 @@ def _load_pairs(db: Path) -> list[tuple[str, int]]:
         ).fetchall()
     finally:
         con.close()
-    return [(str(r[1]), int(r[0]) if r[0] is not None else -1) for r in rows]
+    out: list[tuple[str, int]] = []
+    for cluster_id, rel_path in rows:
+        # normalize to POSIX-style separators
+        rel_norm = str(rel_path).replace("\\", "/")
+        out.append((rel_norm, int(cluster_id) if cluster_id is not None else -1))
+    return out
 
 
 def _pairwise_metrics(

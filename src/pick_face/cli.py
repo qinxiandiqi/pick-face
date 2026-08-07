@@ -702,13 +702,34 @@ def run(
     src: Annotated[list[Path], typer.Option("--src", "-s")],
     out: Annotated[Path, typer.Option("--out", "-o")] = Path("."),
     config_file: Annotated[Path, typer.Option("--config", "-c")] = Path("pick-face.toml"),
-    provider: Annotated[str | None, typer.Option("--provider")] = None,
-    no_atomic: Annotated[
-        bool, typer.Option("--no-atomic", help="Debug: skip staging+rename.")
-    ] = False,
+    provider: Annotated[
+        str | None, typer.Option("--provider", help="cpu/cuda/directml/auto")
+    ] = None,
+    atomic: Annotated[
+        bool,
+        typer.Option(
+            "--atomic/--no-atomic",
+            help="Atomic swap via .staging-<ts> + .prev- (default: on)",
+        ),
+    ] = True,
 ) -> None:
-    """scan + index + cluster + link in one shot."""
-    raise NotImplementedError("T-011: orchestrate scan→index→cluster→link→atomic")
+    """scan + index + cluster + link in one shot (T-011).
+
+    Each stage uses the same on-disk SQLite at `out/.cache/index.sqlite`,
+    so this is just sequential invocation of the four stage subcommands.
+    Stops on the first stage that raises (other than KeyboardInterrupt) so
+    the user sees exactly which stage broke; `--no-atomic` is passed
+    through to `link` for debugging.
+    """
+
+    # 1. scan — pure filesystem walk, no model needed.
+    scan(src=src, out=out, config_file=config_file)
+    # 2. index — runs InsightFace detector + embedder.
+    index(out=out, config_file=config_file, provider=provider)
+    # 3. cluster — HDBSCAN + 2-pass centroid merge.
+    cluster(out=out, config_file=config_file)
+    # 4. link — emit symlinks/hardlinks/copies per cluster.
+    link(out=out, config_file=config_file, atomic=atomic)
 
 
 @app.command()
