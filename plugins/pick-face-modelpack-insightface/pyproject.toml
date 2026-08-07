@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pick-face-modelpack-insightface"
+version = "0.1.0"
+description = "InsightFace buffalo_l / buffalo_sc / antelopev2 ModelPack plugin for pick-face"
+readme = "README.md"
+license = { text = "MIT" }  # the *code* here is MIT; weights themselves are NC-research.
+authors = [{ name = "Jianan" }]
+requires-python = ">=3.10,<3.14"
+keywords = ["pick-face", "face-recognition", "insightface", "model-pack"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+# NOTE: the weights pulled by `init-models --pack buffalo_l` are under
+# InsightFace's non-commercial-research license. Installing this plugin
+# does NOT grant you any commercial rights to those weights — see
+# https://github.com/deepinsight/insightface/blob/master/LICENSE and
+# docs/11-commercial-compliance.md.
+dependencies = [
+    "pick-face>=2.0",
+    "insightface>=0.7.3,<1",
+    "onnxruntime>=1.17,<2",
+]
+
+[project.entry-points."pick_face.model_packs"]
+buffalo_l = "pick_face_modelpack_insightface.pack:BuffaloLPack"
+buffalo_sc = "pick_face_modelpack_insightface.pack:BuffaloScPack"
+antelopev2 = "pick_face_modelpack_insightface.pack:AntelopeV2Pack"
+
+[tool.hatch.version]
+path = "src/pick_face_modelpack_insightface/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pick_face_modelpack_insightface"]

@@ -7,10 +7,14 @@ Reference:
 - docs/11 §3.4 (audit-friendly top header including Model + Model License +
   Accepted-by reference)
 - docs/05 §6 (warnings section)
+- docs/14 §2 (route B: license text comes from PackDescriptor, not the
+  hardcoded `INSIGHTFACE_MODELS` set)
 
-We never guess a license: for `model_name` in INSIGHTFACE_MODELS we mark
-`non-commercial-research`; for user-supplied model dirs we mark `custom (no
-commercial restriction enforced by pick-face)`.
+Route B: the license string is now derived from the installed
+``PackDescriptor.license_class`` (PERMISSIVE / NC_RESEARCH /
+USER_SUPPLIED). The InsightFace NC-research label is only used as a
+fallback when the user still has a v1.x ``model_name`` config without
+``pick-face-modelpack-insightface`` installed.
 """
 
 from __future__ import annotations
@@ -21,7 +25,45 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pick_face.core.config import INSIGHTFACE_MODELS
+from pick_face.platform.pack import LicenseClass, discover_packs
+
+
+def _resolve_pack_descriptor(pack_id: str):
+    """Return ``(descriptor_or_None, license_label, model_descr)``.
+
+    * license_label is human-readable ("Apache-2.0", "InsightFace
+      non-commercial-research", "user-supplied").
+    * model_descr is the inline string shown next to "Model" in the
+      report header — for known packs we name the actual detector +
+      embedder, otherwise we fall back to a generic phrase.
+    """
+    try:
+        packs = discover_packs()
+    except Exception:
+        packs = {}
+    if pack_id in packs:
+        d = packs[pack_id].descriptor
+        cls = d.license_class
+        if cls is LicenseClass.PERMISSIVE:
+            label = f"{d.license_name} (commercial-friendly)"
+        elif cls is LicenseClass.NC_RESEARCH:
+            label = f"{d.license_name} (non-commercial-research)"
+        else:
+            label = f"{d.license_name} (user-supplied)"
+        descr = f"{d.detector_name} + {d.embedder_name}"
+        return d, label, descr
+
+    # v1.x legacy fallback (e.g. user kept model_name = "buffalo_l" but
+    # hasn't installed pick-face-modelpack-insightface yet).
+    if pack_id in {"buffalo_l", "buffalo_sc", "antelopev2", "buffalo_m"}:
+        label = "InsightFace non-commercial-research"
+        descr = "SCRFD-10G detector + ArcFace w600k_r50 embedder"
+        return None, label, descr
+    return (
+        None,
+        "custom (no commercial restriction enforced by pick-face)",
+        "(user-supplied weights)",
+    )
 
 
 @dataclass(frozen=True)
@@ -91,6 +133,34 @@ def collect_stats(conn: sqlite3.Connection) -> ReportStats:
     )
 
 
+def _runtime_pack_id(config_dict: dict) -> str:
+    """Resolve the active pack id from the report's config dict (route B).
+
+    Order: ``pack`` → legacy ``model_name`` → default ``yunet-mfn``.
+    Mirrors ``RuntimeConfig.effective_pack_id`` but operates on the
+    pydantic-validated dict emitted by the CLI.
+    """
+    rt = config_dict.get("runtime", {})
+    pack_id = rt.get("pack")
+    if pack_id:
+        return pack_id
+    legacy = rt.get("model_name")
+    if legacy:
+        return legacy
+    return "yunet-mfn"
+
+
+def _license_is_nc(license_label: str) -> bool:
+    """Heuristic: True iff the resolved label says non-commercial-research.
+
+    Drives the warning text and the "Accepted by" line. Drives off the
+    resolved license label rather than a hardcoded name set so the
+    behaviour stays correct when a third-party pack advertises a custom
+    NC-research license.
+    """
+    return "non-commercial" in license_label.lower()
+
+
 def render_markdown(
     stats: ReportStats,
     *,
@@ -102,16 +172,11 @@ def render_markdown(
 ) -> str:
     """Render the report.md body. The header is the docs/11 §3.4 audit row."""
     rid = run_id or datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    model_name = config_dict.get("runtime", {}).get("model_name", "buffalo_l")
-    model_dir = config_dict.get("runtime", {}).get("model_dir", "~/.insightface/models")
+    pack_id = _runtime_pack_id(config_dict)
+    _, license_label, model_descr = _resolve_pack_descriptor(pack_id)
+    model_dir = config_dict.get("runtime", {}).get("model_dir", "~/.cache/pick-face/models")
     provider = config_dict.get("runtime", {}).get("provider", "auto")
     accepted = bool(config_dict.get("runtime", {}).get("accept_noncommercial_model_license", False))
-
-    license_label = (
-        "InsightFace non-commercial-research"
-        if model_name in INSIGHTFACE_MODELS
-        else "custom (no commercial restriction enforced by pick-face)"
-    )
 
     lines = [
         "# pick-face Report",
@@ -120,7 +185,7 @@ def render_markdown(
         "",
         f"- **Run ID**: `{rid}`",
         f"- **Generated**: `{datetime.now(tz=timezone.utc).isoformat()}`",
-        f"- **Model**: `{model_name}` (SCRFD-10G detector + ArcFace w600k_r50 embedder)",
+        f"- **Model pack**: `{pack_id}` ({model_descr})",
         f"- **Model dir**: `{model_dir}`",
         f"- **Model License**: {license_label}",
         f"- **License Accepted**: {'yes' if accepted else 'no (commercial users must self-train, see docs/11)'}",
@@ -179,25 +244,23 @@ def render_markdown(
 
     lines.append("## License Notice")
     lines.append("")
-    if model_name in INSIGHTFACE_MODELS and not accepted:
+    if _license_is_nc(license_label) and not accepted:
         lines.append(
-            f"> ⚠ Model `{model_name}` is licensed for **non-commercial research only**. "
+            f"> ⚠ Model pack `{pack_id}` is licensed for **non-commercial research only**. "
             "You have not accepted the license in `[runtime] accept_noncommercial_model_license`. "
             "Per docs/11-commercial-compliance.md §3.2 pick-face refuses to start — this "
             "report exists only because it was generated during tests where the flag was "
             "temporarily set. **Stop using this output for any commercial purpose.**"
         )
-    elif model_name in INSIGHTFACE_MODELS:
+    elif _license_is_nc(license_label):
         lines.append(
-            f"> Model `{model_name}` is under the InsightFace non-commercial-research "
-            "license; `accept_noncommercial_model_license = true` was set in this run."
+            f"> Model pack `{pack_id}` is under a non-commercial-research license; "
+            "`accept_noncommercial_model_license = true` was set in this run."
         )
         if ack_summary:
             lines.append(f"> Audit trail: {ack_summary}.")
     else:
-        lines.append(
-            f"> Model `{model_name}` is custom (no commercial restriction enforced by pick-face)."
-        )
+        lines.append(f"> Model pack `{pack_id}` is {license_label}; no commercial restriction.")
     lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -213,17 +276,18 @@ def render_json(
 ) -> str:
     """Same content as markdown, but machine-readable for CI."""
     rid = run_id or datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pack_id = _runtime_pack_id(config_dict)
+    _, license_label, model_descr = _resolve_pack_descriptor(pack_id)
     payload = {
         "run_id": rid,
         "generated_at": datetime.now(tz=timezone.utc).isoformat(),
         "model": {
-            "name": config_dict.get("runtime", {}).get("model_name"),
-            "dir": config_dict.get("runtime", {}).get("model_dir"),
-            "license": (
-                "InsightFace non-commercial-research"
-                if config_dict.get("runtime", {}).get("model_name") in INSIGHTFACE_MODELS
-                else "custom"
-            ),
+            "pack": pack_id,
+            "name": config_dict.get("runtime", {}).get("model_name"),  # legacy
+            "backbones": model_descr,
+            "dir": config_dict.get("runtime", {}).get("model_dir", "~/.cache/pick-face/models"),
+            "license": license_label,
+            "license_class": _license_is_nc(license_label) and "nc-research" or "other",
             "license_accepted": bool(
                 config_dict.get("runtime", {}).get("accept_noncommercial_model_license", False)
             ),
@@ -257,16 +321,11 @@ def render_html(
     links each cluster into the index.json mirror.
     """
     rid = run_id or datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    model_name = config_dict.get("runtime", {}).get("model_name", "buffalo_l")
-    model_dir = config_dict.get("runtime", {}).get("model_dir", "~/.insightface/models")
+    pack_id = _runtime_pack_id(config_dict)
+    _, license_label, model_descr = _resolve_pack_descriptor(pack_id)
+    model_dir = config_dict.get("runtime", {}).get("model_dir", "~/.cache/pick-face/models")
     provider = config_dict.get("runtime", {}).get("provider", "auto")
     accepted = bool(config_dict.get("runtime", {}).get("accept_noncommercial_model_license", False))
-
-    license_label = (
-        "InsightFace non-commercial-research"
-        if model_name in INSIGHTFACE_MODELS
-        else "custom (no commercial restriction enforced by pick-face)"
-    )
 
     theme_attr = 'data-theme="dark"' if dark_mode else 'data-theme="light"'
 
@@ -353,9 +412,7 @@ code {{ background: var(--panel); padding: 0.1rem 0.4rem; border-radius: 4px; fo
   <ul>
     <li><strong>Run ID</strong>: <code>{rid}</code></li>
     <li><strong>Generated</strong>: <code>{datetime.now(tz=timezone.utc).isoformat()}</code></li>
-    <li><strong>Model</strong>: <code>{
-        model_name
-    }</code> (SCRFD-10G detector + ArcFace w600k_r50 embedder)</li>
+    <li><strong>Model pack</strong>: <code>{pack_id}</code> ({model_descr})</li>
     <li><strong>Model dir</strong>: <code>{model_dir}</code></li>
     <li><strong>Model License</strong>: {license_label}</li>
     <li><strong>License Accepted</strong>: {
@@ -627,12 +684,13 @@ def _warnings_for(
 ) -> tuple[str, ...]:
     """Compute the ⚠ Warnings list (docs/05 §6 + docs/11 §3.4 + T-107)."""
     out: list[str] = []
-    name = runtime_cfg.get("model_name", "buffalo_l")
+    pack_id = _runtime_pack_id({"runtime": runtime_cfg})
+    _, license_label, _ = _resolve_pack_descriptor(pack_id)
     accepted = bool(runtime_cfg.get("accept_noncommercial_model_license", False))
 
-    if name in INSIGHTFACE_MODELS and not accepted:
+    if _license_is_nc(license_label) and not accepted:
         out.append(
-            f"Model `{name}` is non-commercial-research-licensed. Set "
+            f"Model pack `{pack_id}` is non-commercial-research-licensed. Set "
             "`[runtime] accept_noncommercial_model_license = true` "
             "(only if your use case qualifies)."
         )

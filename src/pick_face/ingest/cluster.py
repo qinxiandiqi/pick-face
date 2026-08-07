@@ -219,6 +219,19 @@ def _centroid_merge(
 
     cap = 1.0 - float(merge_threshold)
 
+    # When merge_threshold == 0 the centroid-merge step is a no-op (we
+    # only trust HDBSCAN's initial labels) — SFace on AT&T has every
+    # centroid pair with cosine ≥ 0.55, so any positive threshold over-
+    # merges. Skip the loop entirely so 0.0 keeps HDBSCAN's output.
+    if cap >= 1.0:
+        out = np.full_like(lbl, -1)
+        roots = sorted({int(c) for c in np.unique(lbl) if c != -1})
+        remap = {r: i for i, r in enumerate(roots)}
+        for i in range(lbl.shape[0]):
+            if lbl[i] != -1:
+                out[i] = remap[int(lbl[i])]
+        return out
+
     # Iterate while any merge happens. Hard cap to avoid pathological cases.
     for _ in range(10):
         centroids: dict[int, np.ndarray] = {}

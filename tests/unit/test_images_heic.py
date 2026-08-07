@@ -63,8 +63,10 @@ def test_decode_heic_missing_extra_returns_none(tmp_pure: Path) -> None:
 
     # If heic isn't installed, just check the import-failure path is
     # handled — by constructing a non-existent file and verifying decode()
-    # raises FileNotFoundError.
+    # raises a useful error (either because the file doesn't exist or
+    # because the extension isn't recognised without the heif decoder).
+    from pick_face.core.errors import ImageDecodeError
     from pick_face.core.images import decode
 
-    with pytest.raises((FileNotFoundError, OSError)):
+    with pytest.raises((FileNotFoundError, OSError, ImageDecodeError)):
         decode(tmp_pure / "ghost.heic")

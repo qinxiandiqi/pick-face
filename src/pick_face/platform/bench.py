@@ -103,7 +103,7 @@ def run_benchmark(
     )
     from pick_face.ingest.embedder import cosine_distance_matrix
 
-    cfg = ClusteringConfig(min_cluster_size=3, min_samples=2, merge_threshold=0.55)
+    cfg = ClusteringConfig(min_cluster_size=4, min_samples=2, merge_threshold=0.0)
     embs = _synth_embeddings(n_embeddings, k_people, dim, seed)
 
     results: list[BenchResult] = []

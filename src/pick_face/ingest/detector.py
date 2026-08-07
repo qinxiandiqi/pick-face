@@ -45,17 +45,6 @@ class Detector(Protocol):
 
 
 @runtime_checkable
-class Aligner(Protocol):
-    """Pure-geometry step: 5 landmarks + reference → 112x112 RGB chip."""
-
-    ref_landmarks: np.ndarray  # (5, 2) ArcFace template
-
-    def warp(self, bgr: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
-        """Return the 112x112 RGB uint8 chip aligned to *ref_landmarks*."""
-        ...
-
-
-@runtime_checkable
 class Embedder(Protocol):
     """Map a 112x112 RGB chip → 512-D L2-normalized embedding."""
 
@@ -81,6 +70,12 @@ def detection_from_insightface(face: object, chip: np.ndarray) -> Detection:
         chip=chip,
         quality=_rough_quality(chip),
     )
+
+
+# v1.x re-export: Aligner moved to pick_face.ingest.align in route B.
+# Keep the old import path working so third-party plugins built against
+# v1.x keep loading.
+from pick_face.ingest.align import Aligner  # noqa: E402, F401
 
 
 def _rough_quality(chip: np.ndarray) -> float:

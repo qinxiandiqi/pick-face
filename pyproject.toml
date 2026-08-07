@@ -32,10 +32,21 @@ dependencies = [
     "xxhash>=3.4,<4",
     "hnswlib>=0.7,<1",
     "hdbscan>=0.8.30,<1",
-    "insightface>=0.7.3,<1",
-    "onnxruntime>=1.17,<2",
+    # onnxruntime is required by the bundled yunet-sface pack. GPU users
+    # should `uv pip install -U onnxruntime-gpu` over the top. 1.24+ is
+    # the first line that ships numpy 2.x compatible wheels.
+    "onnxruntime>=1.24,<2",
     "platformdirs>=4,<5",
 ]
+
+[project.entry-points."pick_face.model_packs"]
+# Bundled default pack (route B). Apache-2.0, Pi 3B friendly, ~10 MB.
+# Renamed from `yunet-mfn` (MobileFaceNet INT8) to `yunet-sface` after
+# upstream removed the MobileFaceNet weights from opencv_zoo in 2025.
+# The deprecated `yunet-mfn` id is still registered (as an alias that
+# points users at yunet-sface) so existing v1.x configs keep working.
+yunet-sface = "pick_face.platform.packs.yunet_sface:YuNetSfacePack"
+yunet-mfn = "pick_face.platform.packs.yunet_sface:_DeprecatedYuNetMFNPack"
 
 [project.optional-dependencies]
 # Single-format extras. None of these change core behavior; they only add
@@ -44,9 +55,16 @@ heic = ["pillow-heif>=0.16,<1"]
 raw = ["rawpy>=0.18,<1"]
 
 # Provider extras. `gpu` is the union so most users get one knob.
-gpu = ["onnxruntime-gpu>=1.17,<2"]
-gpu-cuda12 = ["onnxruntime-gpu>=1.17,<1.18; python_version<'3.13'"]
-gpu-directml = ["onnxruntime-directml>=1.17,<2"]
+gpu = ["onnxruntime-gpu>=1.24,<2"]
+gpu-cuda12 = ["onnxruntime-gpu>=1.24,<1.25; python_version<'3.13'"]
+gpu-directml = ["onnxruntime-directml>=1.24,<2"]
+
+# InsightFace opt-in pack (route A legacy NC-research models).
+# Installed transitively by the third-party `pick-face-modelpack-insightface`
+# package — kept here as a single-source-of-truth so a `pip install
+# pick-face[insightface]` works for users who want both the plugin and
+# the upstream package.
+insightface = ["insightface>=0.7.3,<1"]
 
 # Dev extras. NOT shipped in `all` (test/CI don't need prod extras).
 dev = [

@@ -20,10 +20,16 @@ def default_model_dir() -> Path:
     Linux : $XDG_CACHE_HOME/pick-face/models  (default ~/.cache/pick-face/models)
     macOS : ~/Library/Caches/pick-face/models/
     Windows: %LOCALAPPDATA%\\pick-face\\models\\
+
+    Env-var precedence (route B):
+      1. ``PICK_FACE_MODEL_DIR`` — preferred.
+      2. ``INSIGHTFACE_HOME`` — kept for v1.x compat (some users still
+         pointed this at a shared NFS mount).
+      3. platformdirs.user_cache_dir — per-OS fallback.
     """
     base = Path(
-        os.environ.get("INSIGHTFACE_HOME")
-        or os.environ.get("PICK_FACE_MODEL_DIR")
+        os.environ.get("PICK_FACE_MODEL_DIR")
+        or os.environ.get("INSIGHTFACE_HOME")
         or user_cache_dir(APP_NAME, APP_AUTHOR)
     )
     return base / "models"

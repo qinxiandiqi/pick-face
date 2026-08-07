@@ -19,16 +19,32 @@ fetched by `init-models` (or supplied by the user) into
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Protocol, runtime_checkable
-
-import numpy as np
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pick_face.ingest.align import Aligner
 from pick_face.ingest.detector import Detector
 from pick_face.ingest.embedder import Embedder
+
+if TYPE_CHECKING:
+    from pick_face.core.config import PickFaceConfig
+
+
+# Pack id grammar: kebab-case, lowercase, 3..64 chars. Keeps plugin authors
+# honest and rules out path traversal / shell injection in `init-models`.
+_PACK_ID_RE = re.compile(r"^[a-z][a-z0-9-]{2,63}$")
+
+
+def valid_pack_id(pack_id: str) -> bool:
+    """Return True iff *pack_id* matches the kebab-case plugin grammar."""
+    return bool(_PACK_ID_RE.fullmatch(pack_id))
+
+
+# Reusable progress callback type: (bytes_done, bytes_total) -> None.
+ProgressCB = "callable"  # noqa: F821 — see module-level Protocol annotation
 
 
 class LicenseClass(str, Enum):
@@ -82,6 +98,11 @@ class ModelPack(Protocol):
 
     Implementations live in their own PyPI package and advertise
     themselves under the `pick_face.model_packs` entry-point group.
+
+    The protocol is **runtime-checkable** — `isinstance(obj, ModelPack)`
+    works at runtime. Discovery (`discover_packs()`) verifies both that
+    the descriptor is well-formed and that the pack id is unique across
+    the installed plugin set.
     """
 
     descriptor: PackDescriptor
@@ -123,33 +144,45 @@ def discover_packs() -> dict[str, ModelPack]:
 
     Returns:
         {pack_id: pack_instance}, merged from every installed
-        `pick_face.model_packs` entry-point. Duplicates (same pack_id
-        from two installs) raise — plugin authors must namespace
-        uniquely.
+        `pick_face.model_packs` entry-point.
+
+    Raises:
+        RuntimeError: a plugin entry-point failed to import/load.
+        TypeError: an entry-point loaded something that isn't a ModelPack.
+        ValueError: two plugins advertised the same pack_id (author bug),
+            or a pack_id violates the kebab-case grammar.
     """
     from importlib import metadata
 
     eps = metadata.entry_points(group="pick_face.model_packs")
     out: dict[str, ModelPack] = {}
+    failures: list[str] = []
     for ep in eps:
         try:
             pack = ep.load()()
         except Exception as e:  # pragma: no cover — plugin bug
-            raise RuntimeError(
-                f"failed to load model-pack entrypoint {ep.name!r}: {e}"
-            ) from e
+            failures.append(f"  - {ep.name}: {type(e).__name__}: {e}")
+            continue
         if not isinstance(pack, ModelPack):
             raise TypeError(
-                f"entry-point {ep.name!r} is not a ModelPack "
-                f"(got {type(pack).__name__})"
+                f"entry-point {ep.name!r} is not a ModelPack (got {type(pack).__name__})"
+            )
+        if not valid_pack_id(pack.descriptor.pack_id):
+            raise ValueError(
+                f"pack {ep.name!r} has invalid pack_id "
+                f"{pack.descriptor.pack_id!r} (must match "
+                f"{_PACK_ID_RE.pattern})"
             )
         if pack.descriptor.pack_id in out:
             raise ValueError(
-                f"duplicate model pack id {pack.descriptor.pack_id!r} "
-                f"from entry-points {ep.name!r} and "
-                f"{[k for k, v in out.items() if v is pack]!r}"
+                f"duplicate model pack id {pack.descriptor.pack_id!r} from entry-points {ep.name!r}"
             )
         out[pack.descriptor.pack_id] = pack
+    if failures:
+        # Surface every plugin that failed rather than stopping on the first
+        # — easier for users to fix a broken [insightface] install.
+        joined = "\n".join(failures)
+        raise RuntimeError(f"{len(failures)} model-pack plugin(s) failed to load:\n{joined}")
     return out
 
 
@@ -170,8 +203,8 @@ def get_pack(pack_id: str) -> ModelPack:
     return packs[pack_id]
 
 
-def require_compliance(pack: ModelPack, cfg: "PickFaceConfig") -> None:  # type: ignore[name-defined]  # noqa: F821
-    """AC-9 gate, genericised over any pack.
+def require_compliance(pack: ModelPack, cfg: PickFaceConfig) -> None:
+    """AC-9 gate, genericised over any pack (docs/11 §3.2).
 
     For LicenseClass.NC_RESEARCH we enforce
     `accept_noncommercial_model_license = true`. For PERMISSIVE and

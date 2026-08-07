@@ -12,7 +12,7 @@ Refer to docs/AGENTS.md for the full documentation index and
 docs/11-commercial-compliance.md for commercial deployment compliance.
 """
 
-__version__ = "1.0.0"
+__version__ = "2.0.0.dev0"
 __license__ = "Apache-2.0"
 
 from pick_face.core.config import (  # noqa: E402, F401
@@ -129,9 +129,21 @@ from pick_face.platform.models import (  # noqa: E402, F401
     read_license_ack,
     write_license_ack,
 )
+from pick_face.platform.pack import (  # noqa: E402, F401
+    LicenseClass,
+    ModelPack,
+    PackDescriptor,
+    discover_packs,
+    get_pack,
+    require_compliance,
+    valid_pack_id,
+)
 from pick_face.platform.runtime import (  # noqa: E402, F401
+    PackRunner,
     check_commercial,
     describe_provider_chain,
+    load_insightface_runner,
+    load_pack_runner,
     resolve_providers,
 )
 from pick_face.store.checkpoint import (  # noqa: E402, F401
@@ -294,8 +306,19 @@ __all__ = [
     "license_notice_for",
     "read_license_ack",
     "write_license_ack",
+    # platform/pack (route B)
+    "LicenseClass",
+    "ModelPack",
+    "PackDescriptor",
+    "discover_packs",
+    "get_pack",
+    "require_compliance",
+    "valid_pack_id",
     # platform/runtime
+    "PackRunner",
     "check_commercial",
     "describe_provider_chain",
+    "load_insightface_runner",
+    "load_pack_runner",
     "resolve_providers",
 ]

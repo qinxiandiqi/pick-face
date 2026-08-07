@@ -4,9 +4,16 @@ Reference: docs/09 §5 (ArcFace-style alignment, 5 landmarks).
 
 We avoid hard-importing onnxruntime/insightface; this module is pure-numpy +
 OpenCV, so the unit-test suite never needs the 100+ MB InsightFace pack.
+
+After route B the `Aligner` Protocol lives here (rather than in
+``ingest.detector``) because every ModelPack needs to provide one and
+the geometry step is intrinsically part of alignment — not detection.
+We re-export it from ``ingest.detector`` for v1.x backward-compat.
 """
 
 from __future__ import annotations
+
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 
@@ -22,6 +29,22 @@ ARCFACE_REFERENCE_5P: np.ndarray = np.array(
     ],
     dtype=np.float32,
 )
+
+
+@runtime_checkable
+class Aligner(Protocol):
+    """Pure-geometry step: 5 landmarks + reference → 112x112 RGB chip.
+
+    ModelPacks return an Aligner via ``pack.build_aligner()``; pick-face
+    uses it to materialise the 112×112 chip that feeds the embedder. The
+    default ArcFace-style reference is ``ARCFACE_REFERENCE_5P`` above.
+    """
+
+    ref_landmarks: np.ndarray  # (5, 2) ArcFace template
+
+    def warp(self, bgr: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
+        """Return the 112x112 RGB uint8 chip aligned to *ref_landmarks*."""
+        ...
 
 
 def estimate_similarity_transform(src: np.ndarray, dst: np.ndarray) -> np.ndarray:

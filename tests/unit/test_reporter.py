@@ -74,29 +74,38 @@ def test_collect_stats_counts(populated_db) -> None:
 
 
 def test_render_markdown_top_header(populated_db) -> None:
-    cfg = PickFaceConfig()  # default: buffalo_l, license=false
+    """Default yunet-mfn (PERMISSIVE) — header shows Apache-2.0 + no warning."""
+    cfg = PickFaceConfig()
     body = render_markdown(
         collect_stats(populated_db),
         config_dict=_config_dict(cfg),
         run_id="2026-07-30T00-00-00Z",
-        warnings=(
-            "Model `buffalo_l` is non-commercial-research-licensed. Set "
-            "`[runtime] accept_noncommercial_model_license = true` "
-            "(only if your use case qualifies).",
-            "Provider=auto; on Windows, this probes DirectML → CPU in that order.",
-        ),
+        warnings=("Provider=auto; on Windows, this probes DirectML → CPU in that order.",),
     )
     # Per docs/11 §3.4 every audit field must be in the header.
     assert "**Run ID**" in body
-    assert "**Model**" in body and "`buffalo_l`" in body
+    assert "**Model pack**" in body and "`yunet-sface`" in body
     assert "**Model License**" in body
     assert "**License Accepted**" in body
     assert "**Provider**" in body
     assert "2026-07-30T00-00-00Z" in body
-    # And the Warning + License Notice sections are present.
-    assert "⚠ Warnings" in body
+    # No strong non-commercial warning for the permissive default pack.
     assert "License Notice" in body
-    # The fact that user has not accepted the license → strong warning text.
+
+
+def test_render_markdown_top_header_nc_pack(populated_db) -> None:
+    """NC-research pack without ack → strong warning text."""
+    cfg = PickFaceConfig(runtime={"pack": "buffalo_l"})
+    body = render_markdown(
+        collect_stats(populated_db),
+        config_dict=_config_dict(cfg),
+        warnings=(
+            "Model pack `buffalo_l` is non-commercial-research-licensed. Set "
+            "`[runtime] accept_noncommercial_model_license = true` "
+            "(only if your use case qualifies).",
+        ),
+    )
+    assert "buffalo_l" in body
     assert "non-commercial" in body.lower()
 
 
@@ -113,29 +122,39 @@ def test_render_markdown_no_warnings_omits_section(populated_db) -> None:
 
 
 def test_render_markdown_with_alternative_model_is_clean(populated_db) -> None:
-    cfg = PickFaceConfig(runtime={"model_name": "arcface_webface4m"})
+    cfg = PickFaceConfig(runtime={"pack": "arcface-webface4m"})
     body = render_markdown(
         collect_stats(populated_db),
         config_dict=_config_dict(cfg),
     )
-    # No non-commercial warning for a non-InsightFace model.
-    assert "custom" in body.lower()
-    # The License Notice should be the "no commercial restriction" form.
+    # No non-commercial warning for a user-supplied pack.
     assert "no commercial restriction" in body.lower()
 
 
 def test_render_json_shape(populated_db) -> None:
+    """Default yunet-mfn (PERMISSIVE) → license is Apache-2.0 (commercial-friendly)."""
     cfg = PickFaceConfig()
     s = collect_stats(populated_db)
     j = render_json(s, config_dict=_config_dict(cfg), run_id="Z")
     parsed = json.loads(j)
     assert parsed["run_id"] == "Z"
-    assert parsed["model"]["name"] == "buffalo_l"
-    assert "InsightFace" in parsed["model"]["license"]
+    assert parsed["model"]["pack"] == "yunet-sface"
+    assert "Apache-2.0" in parsed["model"]["license"]
     assert parsed["model"]["license_accepted"] is False
     assert parsed["stats"]["total_faces"] == 6
     assert parsed["stats"]["persons"] == 2
     assert "warnings" in parsed
+
+
+def test_render_json_shape_nc_pack(populated_db) -> None:
+    """NC-research pack → license label reflects InsightFace non-commercial."""
+    cfg = PickFaceConfig(runtime={"pack": "buffalo_l"})
+    s = collect_stats(populated_db)
+    j = render_json(s, config_dict=_config_dict(cfg), run_id="Z")
+    parsed = json.loads(j)
+    assert parsed["model"]["pack"] == "buffalo_l"
+    assert "InsightFace non-commercial-research" in parsed["model"]["license"]
+    assert parsed["model"]["license_accepted"] is False
 
 
 def test_write_report_populates_file(populated_db, tmp_pure: Path) -> None:
@@ -188,7 +207,7 @@ def test_render_markdown_includes_accepted_by_when_ack_present(
     write_license_ack(model_dir, "buffalo_l", acked_by="alice")
     cfg = PickFaceConfig(
         runtime={
-            "model_name": "buffalo_l",
+            "pack": "buffalo_l",
             "accept_noncommercial_model_license": True,
             "model_dir": tmp_pure / "models",
         }
@@ -196,7 +215,11 @@ def test_render_markdown_includes_accepted_by_when_ack_present(
     body = render_markdown(
         collect_stats(populated_db),
         config_dict=_config_dict(cfg),
-        ack_summary='user "alice" on 2026-07-30 (see `.cache/buffalo_l/.license_ack`)',
+        ack_summary=(
+            'user "alice" on 2026-07-30 (see `'
+            + str(tmp_pure / "models")
+            + "/buffalo_l/.license_ack`)"
+        ),
     )
     assert "**Accepted by**" in body
     assert "alice" in body

@@ -28,10 +28,16 @@ REPO = Path(__file__).resolve().parent.parent.parent
 
 
 def test_version_is_semver_with_major_ge_1() -> None:
-    """We promised 1.0+ stability — the major component must be ≥ 1."""
+    """We promised 1.0+ stability — the major component must be ≥ 1.
+
+    Route B dev versions look like ``2.0.0.dev0`` (PEP 440 dev release);
+    the test tolerates that as a 4-part version where the leading three
+    parts are the SemVer triple and the trailing component is the
+    pre-release tag.
+    """
     parts = __version__.split(".")
-    assert len(parts) == 3, f"version {__version__!r} is not MAJOR.MINOR.PATCH"
-    for p in parts:
+    assert len(parts) in (3, 4), f"version {__version__!r} is not MAJOR.MINOR.PATCH"
+    for p in parts[:3]:
         assert p.isdigit(), f"version component {p!r} is not numeric"
     assert int(parts[0]) >= 1, (
         f"version {__version__!r} is below 1.0.0 — the compatibility "

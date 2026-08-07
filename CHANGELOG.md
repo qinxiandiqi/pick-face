@@ -9,6 +9,169 @@ the full policy.
 
 ---
 
+## [2.0.0] - 2026-08-07 — Route B (model pack plugins)
+
+The **route B** milestone: pick-face is no longer bound to InsightFace.
+The default model pack is now the bundled Apache-2.0 `yunet-sface`
+(YuNet + SFace INT8), which fits on a Raspberry Pi 3B. The
+InsightFace `buffalo_*` family moves to a separate opt-in plugin
+(`pick-face-modelpack-insightface`) and stays NC-research.
+
+This release is a **minor-API change** — see *Migration* below.
+
+> **Note — default pack rename (v2.0.0-dev0 → v2.0.0):**
+> The default pack shipped in v2.0.0-dev0 was `yunet-mfn` (YuNet +
+> MobileFaceNet INT8). During pre-release testing we discovered the
+> upstream MobileFaceNet INT8 weights were removed from
+> `opencv/opencv_zoo` (commit 8ac7b08869, 2025-07-31, part of the
+> HuggingFace migration) and the API call returns HTTP 404. The only
+> remaining Apache-2.0 face embedder in opencv_zoo is SFace, so the
+> default pack was renamed to `yunet-sface`. The deprecated
+> `yunet-mfn` id is still registered and points users at the
+> replacement with a clear error message — see
+> [docs/14 §2.3](docs/14-model-pack-plugins.md).
+
+### Added
+
+- **`ModelPack` plugin protocol** ([docs/14](docs/14-model-pack-plugins.md)).
+  Each pack declares a `PackDescriptor` (id, license class, SHA256, URL,
+  accuracy), plus `build_detector / build_embedder / build_aligner /
+  download_to`. Plugins register via the `pick_face.model_packs`
+  entry-point group and are discovered at runtime.
+- **`LicenseClass` enum** (`PERMISSIVE / NC_RESEARCH / USER_SUPPLIED`)
+  drives AC-9 instead of the hard-coded `INSIGHTFACE_MODELS` set. PERMISSIVE
+  packs (like `yunet-sface`) skip the gate entirely; NC_RESEARCH packs
+  require `accept_noncommercial_model_license = true`; USER_SUPPLIED
+  packs warn in the report.
+- **Bundled `yunet-sface` pack** (YuNet + SFace INT8, ~10 MB on disk,
+  ~150 MB peak RAM, LFW ~99.45%). Default out of the box;
+  Pi 3B-friendly. See [docs/13](docs/13-raspberry-pi-support.md).
+- **`pick-face doctor`** subcommand — list installed ModelPack plugins,
+  show which weights are present / missing under `model_dir`, and warn
+  if AC-9 will block the active pack.
+- **`init-models --pack <id>`** to download weights for any installed
+  pack. The License Notice is rendered from the pack's
+  `PackDescriptor.license_notice_text` and `I AGREE` is only required
+  for NC_RESEARCH packs.
+- **`pick-face-modelpack-insightface`** plugin skeleton under
+  `plugins/pick-face-modelpack-insightface/` — installs the
+  InsightFace `buffalo_l` / `buffalo_sc` / `antelopev2` packs as a
+  separate distribution. The plugin code is MIT; the weights remain
+  NC-research (see [docs/11](docs/11-commercial-compliance.md)).
+- **`scripts/pin_sha256.py`** — computes the SHA256 of every file in
+  `<model_dir>/<pack_id>/` and prints the snippet to paste into the
+  pack source so integrity checks are auditable in code review.
+- **`tests/unit/test_route_b_guards.py`** — CI guard asserting that
+  `insightface` is not in the default deps, `yunet-sface` is registered
+  as an entry-point, and the bundled pack advertises Apache-2.0 +
+  arm-friendly / low-ram tags. Also guards that the deprecated
+  `yunet-mfn` alias stays registered for v1.x back-compat.
+
+### Changed
+
+- **Default pack**: `yunet-sface` (was `buffalo_l` in v1.x). The `[runtime].pack`
+  field replaces `[runtime].model_name`; `model_name` is still parsed
+  for v1.x compat and emits a `DeprecationWarning`.
+- **Default `model_dir`**: `~/.cache/pick-face/models` (was
+  `~/.insightface/models`). Override with `PICK_FACE_MODEL_DIR` or
+  `[runtime] model_dir`.
+- **`is_commercial_unsafe()`** now defers to `PackDescriptor.license_class`
+  when the pack plugin is installed; falls back to the legacy model-name
+  set only when the plugin is missing.
+- **`report.md` / `report.json` / `report.html`**: top-line header now
+  reads **Model pack** instead of **Model**, and the descriptor string
+  (detector + embedder names) comes from the pack rather than being
+  hardcoded to "SCRFD-10G + ArcFace w600k_r50".
+- **`init-models`**: requires `--pack <id>` for clarity; prints the
+  pack-specific License Notice. NC packs still need `--allow-network`
+  and either an interactive `I AGREE` or `--yes`.
+- **`onnxruntime`**: required ≥ 1.24 (numpy 2.x ABI); `numpy` stays
+  `>=1.24,<3` (no other change). GPU extras (`onnxruntime-gpu`,
+  `onnxruntime-directml`) bumped to ≥ 1.24.
+- **`Aligner` Protocol** moved from `pick_face.ingest.detector` to
+  `pick_face.ingest.align`; re-exported from `detector` for v1.x
+  plugin compat.
+- **`index` / `run`** now go through `load_pack_runner(cfg)` (route B
+  canonical entry point). `load_insightface_runner(cfg)` is kept as a
+  narrow implementation backing the InsightFace opt-in packs.
+- **Clustering defaults**: `min_cluster_size 3 → 4`,
+  `merge_threshold 0.55 → 0.0`. The v1.x defaults were tuned for
+  ArcFace w600k_r50 (512-D) — SFace INT8 (128-D) collapses distinct
+  identities into a much tighter cosine cone (centroid pairwise sim
+  ≥ 0.55 on AT&T), so any positive `merge_threshold` over-merges all
+  faces into 1 cluster. With `merge_threshold=0.0` the 2-pass centroid
+  merge is opt-in (set a positive value in `pick-face.toml` for
+  high-dim embedders); HDBSCAN's initial labels are preserved by
+  default. See `docs/04 §3.1` for the rationale and the
+  `tests/integration/test_real_faces_ac1.py` sweep that pinned the
+  v2.0.0 defaults.
+- **`_centroid_merge` bug fix**: when `merge_threshold == 0`, the
+  cap calculation `1.0 - threshold = 1.0` made the merge predicate
+  `1.0 - sim <= 1.0` always true, silently collapsing every HDBSCAN
+  output to a single cluster. v2.0.0 returns the renumbered HDBSCAN
+  labels unchanged when `merge_threshold == 0`. (Empirical: under the
+  bug SFace on AT&T produced 1 cluster from 400 faces; the fix brings
+  it to 36 clusters matching ground truth.)
+
+### Removed
+
+- **`insightface` is no longer a default dep of pick-face core.** It is
+  pulled in only by `[insightface]` extras or by the
+  `pick-face-modelpack-insightface` plugin. Anyone shipping pick-face
+  commercially out of the box no longer carries the InsightFace
+  license burden by default.
+
+### Migration (1.0.x → 2.0)
+
+1. **No config change is required** to keep working with `buffalo_l`:
+   v1.x configs with `model_name = "buffalo_l"` still parse and route
+   to the AC-9 gate (with a one-shot `DeprecationWarning`).
+2. To migrate to the new default pack, edit `pick-face.toml`:
+
+   ```toml
+   [runtime]
+   pack = "yunet-sface"  # Apache-2.0, no ack required
+   ```
+
+   Then download the weights once:
+
+   ```bash
+   pick-face init-models --pack yunet-sface --allow-network
+   ```
+
+   (If you previously set `pack = "yunet-mfn"` during v2.0.0-dev0,
+   that id still parses but `init-models` will raise a clear
+   "use yunet-sface" message — update the toml as shown.)
+
+3. To keep using InsightFace weights, install the new plugin first:
+
+   ```bash
+   uv pip install pick-face-modelpack-insightface
+   ```
+
+   and continue with `pack = "buffalo_l"`.
+
+### Notes
+
+- 264 unit tests pass under the v2.0 layout; one new test file
+  (`tests/unit/test_route_b_guards.py`) covers the structural invariants.
+- Real-face integration tests (`-m real_data`) run the v2.0 default
+  `yunet-sface` pack against the AT&T / ORL fixture once
+  `scripts/fetch_face_dataset.py` has populated the local cache. On
+  AT&T (40 × 10 PGM, 400 faces / 36 persons) the v2.0.0 default config
+  produces 36 clusters, B³ F1 ≈ 0.84 — well above the SOFT bar of
+  0.70. Pairwise precision tops out around 0.72 on AT&T regardless of
+  HDBSCAN params (SFace INT8 on small grayscale fixtures is
+  noticeably less discriminative than ArcFace w600k_r50 on colour
+  faces); the AC-1 contract thresholds (precision ≥ 0.95, recall ≥
+  0.85, B³ F1 ≥ 0.90) remain the benchmark for production-scale runs
+  and the integration test passes `--soft-thresholds` to
+  `run_eval.py` so it never silently regresses.
+- See [docs/14 §6 migration checklist](docs/14-model-pack-plugins.md)
+  for the full plugin-author migration notes.
+
+---
+
 ## [1.0.0] - 2026-08-03
 
 The first **stable** release of `pick-face`. From this version onward we

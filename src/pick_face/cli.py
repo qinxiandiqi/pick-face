@@ -160,11 +160,21 @@ def init(
 
 @app.command()
 def init_models(
+    pack: Annotated[
+        str | None,
+        typer.Option(
+            "--pack",
+            help=(
+                "Model pack id to download (e.g. 'yunet-mfn', 'buffalo_l'). "
+                "Defaults to `[runtime].pack` in pick-face.toml."
+            ),
+        ),
+    ] = None,
     allow_network: Annotated[
         bool,
         typer.Option(
             "--allow-network",
-            help="Required to actually contact InsightFace model servers.",
+            help="Required to actually contact the model-pack download URLs.",
         ),
     ] = False,
     yes: Annotated[
@@ -172,7 +182,7 @@ def init_models(
         typer.Option(
             "--yes",
             "-y",
-            help="Skip the interactive 'I AGREE' confirmation prompt.",
+            help="Skip the interactive 'I AGREE' confirmation prompt (NC packs only).",
         ),
     ] = False,
     config_file: Annotated[
@@ -181,9 +191,13 @@ def init_models(
 ) -> None:
     """Download the configured model pack (requires --allow-network + I AGREE).
 
-    Per docs/11 §3.3 we always print the License Notice for InsightFace
-    models and (in interactive mode) require the user to type 'I AGREE'.
-    A `.license_ack` JSON file is written next to the weights so the
+    Per docs/14 §4 the active pack is resolved by ``--pack`` (CLI) →
+    ``[runtime].pack`` (toml) → legacy ``[runtime].model_name`` (v1.x
+    compat) → default ``yunet-mfn``. The License Notice is rendered
+    from the installed ``PackDescriptor`` (LicenseClass-driven), and for
+    NC-research packs we additionally require an interactive
+    ``I AGREE`` confirmation unless ``--yes`` is passed. A
+    ``.license_ack`` JSON file is written next to the weights so the
     audit trail is preserved (docs/11 §3.4).
     """
     if not allow_network:
@@ -194,28 +208,35 @@ def init_models(
             )
         )
 
-    from pick_face.core.config import load_config
-    from pick_face.platform.models import (
-        is_insightface_model,
-        license_notice_for,
-        write_license_ack,
-    )
+    from pick_face.core.config import PickFaceConfig, load_config
+    from pick_face.platform.models import license_notice_for, write_license_ack
+    from pick_face.platform.pack import LicenseClass, discover_packs
 
     if config_file.exists():
         cfg = load_config(config_file)
     else:
-        from pick_face.core.config import PickFaceConfig
-
         cfg = PickFaceConfig()
         console.print(
             f"[yellow]No config at {config_file}; using defaults "
-            f"(model_name={cfg.runtime.model_name!r}).[/yellow]"
+            f"(pack={cfg.runtime.pack!r}).[/yellow]"
         )
 
-    notice = license_notice_for(cfg.runtime.model_name)
+    pack_id = pack or cfg.runtime.effective_pack_id()
+    packs = discover_packs()
+    if pack_id not in packs:
+        installed = ", ".join(sorted(packs)) or "(none)"
+        _exit(
+            CliArgError(
+                f"model pack {pack_id!r} not installed. Installed: {installed}. "
+                f"Install with: uv pip install pick-face-modelpack-{pack_id}"
+            )
+        )
+    selected = packs[pack_id]
+
+    notice = license_notice_for(pack_id)
     console.print(notice)
 
-    if is_insightface_model(cfg.runtime.model_name) and not yes:
+    if selected.descriptor.license_class is LicenseClass.NC_RESEARCH and not yes:
         try:
             reply = input("Type 'I AGREE' to continue (or 'NO' to abort): ").strip()
         except EOFError:
@@ -223,16 +244,23 @@ def init_models(
         if reply != "I AGREE":
             _exit(CliArgError("Aborted by user (no 'I AGREE' typed)."))
 
-    # Persist the audit trail. The actual download is delegated to the
-    # InsightFace model_zoo when available; we only write the .license_ack.
-    target_dir = cfg.runtime.model_dir / cfg.runtime.model_name
-    ack_path = write_license_ack(target_dir, cfg.runtime.model_name)
-    console.print(f"[green]wrote[/green] {ack_path}")
-    console.print(
-        "[dim]Tip: hand the .license_ack to your auditor. The actual weight "
-        "download is left to the bundled `insightface.model_zoo` so pick-face "
-        "does not pin a downloader in M1.[/dim]"
-    )
+    # Hand off the actual download to the pack plugin; we only write the
+    # .license_ack for NC packs (PERMISSIVE packs self-license).
+    target_dir = cfg.runtime.model_dir / pack_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        selected.download_to(target_dir)
+    except Exception as e:
+        _exit(ModelLoadError(f"download failed for pack {pack_id!r}: {e}"))
+
+    if selected.descriptor.license_class is LicenseClass.NC_RESEARCH:
+        ack_path = write_license_ack(target_dir, pack_id)
+        console.print(f"[green]wrote[/green] {ack_path}")
+    else:
+        console.print(
+            f"[green]downloaded[/green] {pack_id} into {target_dir} "
+            f"(license: {selected.descriptor.license_name}, no ack required)"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -320,14 +348,14 @@ def index(
     from pick_face.core.config import load_config
     from pick_face.core.errors import ImageDecodeError, PipelineFailureError
     from pick_face.core.images import decode as decode_image
-    from pick_face.platform.runtime import load_insightface_runner
+    from pick_face.platform.runtime import load_pack_runner
 
     cfg = load_config(config_file)
     if provider is not None:
         cfg.runtime.provider = provider  # CLI override
 
     try:
-        runner = load_insightface_runner(cfg)
+        runner = load_pack_runner(cfg)
     except (CommercialLicenseError, ModelNotFoundError, ModelLoadError):
         raise  # let _errprint surface it cleanly
 
@@ -1045,6 +1073,105 @@ def rollback(
         out.rename(current_backup)
     target.rename(out)
     console.print(f"[green]rolled back to[/green] {out}  (current is now at {current_backup})")
+
+
+@app.command()
+def doctor(
+    config_file: Annotated[
+        Path, typer.Option("--config", "-c", help="Path to pick-face.toml.")
+    ] = Path("pick-face.toml"),
+) -> None:
+    """Show runtime info: installed packs, model files, Python versions.
+
+    Route B (docs/14 §6 / T-509): the canonical "what do I have on my
+    machine?" command. Prints:
+      * pick-face + Python + onnxruntime versions
+      * Every installed ModelPack plugin (id, display name, license,
+        tag set)
+      * For the active pack: which weights are present / missing under
+        ``[runtime].model_dir/<pack_id>/``
+      * Whether `accept_noncommercial_model_license` is set when the
+        active pack is NC-research
+    """
+    from pick_face.core.config import PickFaceConfig, load_config
+    from pick_face.platform.pack import LicenseClass, discover_packs
+    from pick_face.platform.runtime import (
+        describe_provider_chain,
+        resolve_providers,
+    )
+
+    try:
+        cfg = load_config(config_file)
+    except Exception:
+        cfg = PickFaceConfig()
+        console.print(f"[yellow]No/empty config at {config_file}; using defaults.[/yellow]")
+
+    pack_id = cfg.runtime.effective_pack_id()
+    model_dir = cfg.runtime.model_dir
+
+    console.print("[bold]pick-face doctor[/bold]")
+    console.print(f"  pick-face : {__version__}")
+    console.print(f"  python    : {sys.version.split()[0]}")
+    try:
+        import onnxruntime as ort
+
+        console.print(f"  onnxruntime: {ort.__version__}")
+        console.print(
+            f"  providers  : {describe_provider_chain(resolve_providers(cfg.runtime.provider))}"
+        )
+    except ImportError:
+        console.print("  onnxruntime: [red]NOT INSTALLED[/red]")
+
+    console.print("")
+    console.print("[bold]Installed model packs[/bold]")
+    packs = discover_packs()
+    if not packs:
+        console.print("  (none — only the bundled `yunet-mfn` is shipped with core)")
+    for pid in sorted(packs):
+        p = packs[pid]
+        d = p.descriptor
+        marker = "[green]ACTIVE[/green]" if pid == pack_id else "[dim]available[/dim]"
+        cls = d.license_class.value
+        console.print(
+            f"  {marker} {pid:20s}  {d.display_name}\n"
+            f"     license={cls}/{d.license_name}  "
+            f"size=~{(d.detector_size_bytes + d.embedder_size_bytes) // 1024} KiB  "
+            f"tags={','.join(d.tags) or '-'}"
+        )
+
+    console.print("")
+    console.print(f"[bold]Active pack:[/bold] `{pack_id}`")
+    console.print(f"  model dir: {model_dir}")
+    pack_dir = model_dir / pack_id
+    if not pack_dir.exists():
+        console.print(f"  [yellow]weights directory missing: {pack_dir}[/yellow]")
+        console.print(f"  Run: pick-face init-models --pack {pack_id} --allow-network")
+    else:
+        if pack_id in packs:
+            expected = set(packs[pack_id].expected_files())
+            present = {p.name for p in pack_dir.iterdir() if p.is_file()}
+            missing = expected - present
+            for fname in sorted(expected):
+                ok = fname in present
+                mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
+                console.print(f"  {mark} {fname}")
+            if missing:
+                console.print(
+                    f"  [yellow]{len(missing)} file(s) missing — re-run "
+                    f"`pick-face init-models --pack {pack_id} --allow-network`[/yellow]"
+                )
+        else:
+            files = sorted(p.name for p in pack_dir.iterdir() if p.is_file())
+            console.print(f"  files: {', '.join(files) or '(empty)'}")
+
+    if pack_id in packs:
+        cls = packs[pack_id].descriptor.license_class
+        if cls is LicenseClass.NC_RESEARCH and not cfg.runtime.accept_noncommercial_model_license:
+            console.print(
+                f"\n[red]AC-9 gate will block this run.[/red] Pack `{pack_id}` "
+                f"is {packs[pack_id].descriptor.license_name}; set "
+                f"`[runtime] accept_noncommercial_model_license = true`."
+            )
 
 
 @app.command()

@@ -27,6 +27,8 @@ dataset hasn't been fetched yet.
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -49,7 +51,15 @@ def _face_runner() -> str:
 
 def _run(cmd: list[str], cwd: Path, timeout: int = 1800) -> None:
     print(f"$ {' '.join(cmd)}  (cwd={cwd})")
-    r = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout)
+    # Forward HOME / USERPROFILE so `Path.expanduser()` works when the
+    # config's `model_dir = "~/.cache/..."` gets validated. The test
+    # writes `model_dir` explicitly into the toml above, but we still
+    # need a HOME for any default values pick-face might expanduser()
+    # while loading the config.
+    env = os.environ.copy()
+    r = subprocess.run(
+        cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=env
+    )
     if r.returncode != 0:
         sys.stderr = sys.stderr  # noqa: PLW0127 (keep visible)
         raise AssertionError(
@@ -72,13 +82,24 @@ def test_real_face_smoke(tmp_path: Path, real_face_dir: Path, real_face_manifest
 
     # 1a. Flip the AC-9 license gate to true. The default is `false`
     #     (fail-safe — see docs/11 §3.2). For real-face testing we need
-    #     the AC-9 guard lifted so index/run can load buffalo_l; the
+    #     the AC-9 guard lifted so index/run can load yunet-sface; the
     #     .license_ack file is written separately by `init-models`.
     #
     #     Also tune detection to AT&T's small + low-contrast PGM frames:
     #     det_size=320 keeps the face at ~75% of the canvas (vs. ~5% at
     #     the default 640), and det_thresh=0.3 lets borderline scores
     #     through (avg 0.86 at det_size=320, vs. 0 detected at default).
+    #
+    #     And point `model_dir` at whatever cache the dev already has
+    #     populated. We honour PICK_FACE_MODEL_DIR / INSIGHTFACE_HOME
+    #     if set, else fall back to ~/.insightface/models (the legacy
+    #     location many devs still use). The default config value
+    #     `~/.cache/pick-face/models` is left untouched in pick-face.toml
+    #     so the test failure mode mirrors a fresh install.
+    model_dir = os.environ.get(
+        "PICK_FACE_MODEL_DIR",
+        os.environ.get("INSIGHTFACE_HOME", os.path.expanduser("~/.insightface/models")),
+    )
     text = cfg.read_text(encoding="utf-8")
     text = text.replace(
         "accept_noncommercial_model_license = false",
@@ -86,6 +107,18 @@ def test_real_face_smoke(tmp_path: Path, real_face_dir: Path, real_face_manifest
     )
     text = text.replace("det_thresh = 0.5", "det_thresh = 0.3")
     text = text.replace("det_size = 640", "det_size = 320")
+    # The default toml ships model_dir = "~/.cache/pick-face/models"
+    # Use as_posix() so Windows backslashes become forward slashes —
+    # TOML basic strings treat `\` as an escape char (`\U` would try to
+    # parse 8 hex chars and fail).
+    model_dir_posix = Path(model_dir).as_posix()
+    text = re.sub(
+        r"^model_dir\s*=\s*[\"'].*?[\"']",
+        lambda _m: f'model_dir = "{model_dir_posix}"',
+        text,
+        count=1,
+        flags=re.MULTILINE,
+    )
     cfg.write_text(text, encoding="utf-8")
 
     # 2. Run the pipeline. If InsightFace weights aren't on disk, this
@@ -141,9 +174,7 @@ def test_real_face_smoke(tmp_path: Path, real_face_dir: Path, real_face_manifest
     n_filesystem_links = sum(
         1 for d in cluster_dirs for f in d.rglob("*") if f.is_file() or f.is_symlink()
     )
-    assert n_filesystem_links > 0, (
-        f"linker produced no files (cluster_dirs={len(cluster_dirs)})"
-    )
+    assert n_filesystem_links > 0, f"linker produced no files (cluster_dirs={len(cluster_dirs)})"
 
     # 5. Reports exist. We asked for --format html (the M4 T-301 path),
     #    so md may not be present alongside — assert html only.

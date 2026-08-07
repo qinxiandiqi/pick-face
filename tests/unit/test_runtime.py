@@ -1,4 +1,9 @@
-"""Tests for pick_face.runtime that don't require InsightFace installed."""
+"""Tests for pick_face.runtime that don't require InsightFace installed.
+
+Route B (v2.0+): the default pack is ``yunet-mfn`` (PERMISSIVE), so the
+default config is no longer blocked. NC packs like ``buffalo_l`` must
+be opted in explicitly. The tests below cover both shapes.
+"""
 
 from __future__ import annotations
 
@@ -39,13 +44,20 @@ def test_resolve_unknown_provider_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_check_commercial_blocks_default_config() -> None:
-    cfg = PickFaceConfig()  # buffalo_l + accept=False
+def test_check_commercial_passes_for_default_config() -> None:
+    """The v2.0+ default yunet-mfn pack is Apache-2.0 → AC-9 passes."""
+    cfg = PickFaceConfig()
+    check_commercial(cfg)  # must not raise
+
+
+def test_check_commercial_blocks_nc_pack_without_ack() -> None:
+    cfg = PickFaceConfig(runtime={"pack": "buffalo_l"})
     with pytest.raises(CommercialLicenseError):
         check_commercial(cfg)
 
 
-def test_check_commercial_blocks_other_insightface_models() -> None:
+def test_check_commercial_blocks_other_nc_packs() -> None:
+    """Legacy NC pack ids still trip AC-9 when used via legacy ``model_name``."""
     for name in ("buffalo_sc", "antelopev2", "buffalo_m"):
         cfg = PickFaceConfig(runtime={"model_name": name})
         with pytest.raises(CommercialLicenseError):
@@ -53,10 +65,10 @@ def test_check_commercial_blocks_other_insightface_models() -> None:
 
 
 def test_check_commercial_passes_when_acknowledged() -> None:
-    cfg = PickFaceConfig(runtime={"accept_noncommercial_model_license": True})
+    cfg = PickFaceConfig(runtime={"pack": "buffalo_l", "accept_noncommercial_model_license": True})
     check_commercial(cfg)  # must not raise
 
 
 def test_check_commercial_passes_for_alternative_model() -> None:
-    cfg = PickFaceConfig(runtime={"model_name": "arcface_webface4m"})
+    cfg = PickFaceConfig(runtime={"pack": "arcface-webface4m"})
     check_commercial(cfg)  # must not raise
