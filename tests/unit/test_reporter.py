@@ -132,14 +132,20 @@ def test_render_markdown_with_alternative_model_is_clean(populated_db) -> None:
 
 
 def test_render_json_shape(populated_db) -> None:
-    """Default yunet-mfn (PERMISSIVE) → license is Apache-2.0 (commercial-friendly)."""
+    """Default yunet-sface (PERMISSIVE) → license is MIT (commercial-friendly)
+    per the opencv_zoo per-model LICENSE files. `permissive` is the
+    LicenseClass, the SPDX id is `MIT`.
+    """
     cfg = PickFaceConfig()
     s = collect_stats(populated_db)
     j = render_json(s, config_dict=_config_dict(cfg), run_id="Z")
     parsed = json.loads(j)
     assert parsed["run_id"] == "Z"
     assert parsed["model"]["pack"] == "yunet-sface"
-    assert "Apache-2.0" in parsed["model"]["license"]
+    assert "MIT" in parsed["model"]["license"], (
+        f"default yunet-sface license should be MIT (per opencv_zoo per-model "
+        f"LICENSE files); got {parsed['model']['license']!r}"
+    )
     assert parsed["model"]["license_accepted"] is False
     assert parsed["stats"]["total_faces"] == 6
     assert parsed["stats"]["persons"] == 2

@@ -48,9 +48,11 @@ def test_yunet_sface_pack_is_discoverable() -> None:
     assert "yunet-sface" in packs, f"yunet-sface missing; got {sorted(packs)}"
     descriptor = packs["yunet-sface"].descriptor
     assert descriptor.pack_id == "yunet-sface"
-    assert descriptor.license_name.startswith("Apache-2.0"), (
-        f"yunet-sface must be Apache-2.0 (commercial-friendly), got {descriptor.license_name!r}"
+    assert descriptor.license_class.value == "permissive", (
+        f"yunet-sface must be permissive (commercial-friendly), got {descriptor.license_class!r}"
     )
+    assert descriptor.detector_license_spdx == "MIT"
+    assert descriptor.embedder_license_spdx == "MIT"
     assert "arm-friendly" in descriptor.tags or "low-ram" in descriptor.tags, (
         "yunet-sface should advertise ARM-friendly / low-ram tags so Pi 3B "
         "users can find it via `pick-face doctor`"
@@ -118,6 +120,7 @@ def test_onnxruntime_is_default_dep() -> None:
     "pack_id,expected_class",
     [
         ("yunet-sface", "permissive"),
+        ("yunet-arcface", "permissive"),
     ],
 )
 def test_default_pack_license_class(pack_id: str, expected_class: str) -> None:
@@ -126,3 +129,16 @@ def test_default_pack_license_class(pack_id: str, expected_class: str) -> None:
 
     pack = discover_packs()[pack_id]
     assert pack.descriptor.license_class.value == expected_class
+
+
+def test_yunet_arcface_entry_point_registered() -> None:
+    """`yunet-arcface` (high-precision tier) must also be registered under
+    `pick_face.model_packs` so `discover_packs()` finds it without
+    explicit imports.
+    """
+    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    eps = pyproject["project"].get("entry-points", {}).get("pick_face.model_packs", {})
+    assert "yunet-arcface" in eps, (
+        f"`yunet-arcface` must be registered under [project.entry-points."
+        f'"pick_face.model_packs"]; got: {sorted(eps)}'
+    )

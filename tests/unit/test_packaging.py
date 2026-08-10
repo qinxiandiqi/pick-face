@@ -54,6 +54,9 @@ EXPECTED_MODULES = {
     "platform/bench",
     "platform/models",
     "platform/runtime",
+    "platform/pack",
+    "platform/packs/yunet_sface",
+    "platform/packs/yunet_arcface",
 }
 
 
