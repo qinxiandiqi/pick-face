@@ -11,9 +11,10 @@
 The `pick-face` **code** is Apache-2.0; you may use it freely including
 in commercial products.
 
-**Route B (v2.0+): the default model pack `yunet-mfn` is also Apache-2.0.**
-You can deploy pick-face commercially **out of the box** with no
-license acknowledgment required.
+**Route B (v2.0+): the default model pack `yunet-sface` is MIT, and the
+optional high-precision tier `yunet-arcface` is Apache-2.0.** Both ship
+in the core wheel and require no license acknowledgment. You can deploy
+pick-face commercially **out of the box**.
 
 If you opt into **InsightFace** model packs (`buffalo_l` / `buffalo_sc` /
 `antelopev2`) via `pip install pick-face-modelpack-insightface`, those
@@ -29,7 +30,8 @@ explicitly type `I AGREE`.
 | Asset | License | Commercial OK? |
 |---|---|---|
 | `pick-face` code & docs | Apache-2.0 | ✅ |
-| **Default pack `yunet-mfn`** (OpenCV Zoo) | **Apache-2.0** | **✅** |
+| **Default pack `yunet-sface`** (OpenCV Zoo per-model) | **MIT** | **✅** |
+| **High-precision tier `yunet-arcface`** (ONNX Model Zoo + OpenCV Zoo) | **Apache-2.0 + MIT** | **✅** |
 | `onnxruntime`, `hnswlib`, `hdbscan`, Pillow, OpenCV | MIT / Apache-2.0 / BSD | ✅ |
 | `insightface` Python package (opt-in plugin) | MIT | ✅ |
 | `buffalo_l` / `buffalo_sc` / `antelopev2` weights (opt-in) | **InsightFace non-commercial-research** | **❌** |
@@ -44,16 +46,19 @@ uv venv
 uv pip install -e ".[heic]"          # add `raw` for RAW photos
 
 # 2. Generate a starter config
-#    Default: pack = "yunet-mfn" (Apache-2.0, commercial-friendly)
+#    Default: pack = "yunet-sface" (MIT, commercial-friendly)
 pick-face init
 
-# 3. (Optional) Edit pick-face.toml — switch `pack` if you want InsightFace.
-#    Keep "yunet-mfn" for the Apache-2.0 default.
-#    Switch to "buffalo_l" for higher accuracy (NC-research, opt-in only).
+# 3. (Optional) Edit pick-face.toml — switch `pack` if you want high-precision.
+#    Keep "yunet-sface" for the MIT default.
+#    Switch to "yunet-arcface" for 512-D ArcFace (Apache-2.0, GPU recommended).
+#    Switch to "buffalo_l" for InsightFace (NC-research, opt-in only).
 
 # 4. Download model weights (requires --allow-network)
-#    yunet-mfn: 5 MB, no acknowledgment (Apache-2.0)
-pick-face init-models --pack yunet-mfn --allow-network
+#    yunet-sface: ~10 MB, no acknowledgment (MIT)
+pick-face init-models --pack yunet-sface --allow-network
+#    yunet-arcface: --quant fp32 ~261 MB / --quant int8 ~66 MB (Apache-2.0)
+pick-face init-models --pack yunet-arcface --quant int8 --allow-network
 #    buffalo_l: 325 MB, requires --yes "I AGREE" (NC-research)
 pip install pick-face-modelpack-insightface
 pick-face init-models --pack buffalo_l --allow-network --yes
@@ -77,19 +82,19 @@ low_confidence_faces.json               # candidates for `pick-face review apply
 ## Raspberry Pi / ARM support
 
 `pick-face` runs out of the box on Raspberry Pi 3B (1 GB) and up via the
-default `yunet-mfn` pack (~5 MB on disk, ~150 MB RAM). See
+default `yunet-sface` pack (~10 MB on disk, ~150 MB RAM). See
 **[docs/13-raspberry-pi-support.md](docs/13-raspberry-pi-support.md)**
 for the full compatibility matrix, install steps, and performance
 baselines.
 
 | Device | Default pack | Notes |
 |---|---|---|
-| Raspberry Pi 3B / 3B+ (1 GB) | `yunet-mfn` | Open swap 1 GB |
-| Raspberry Pi 4B 1-2 GB | `yunet-mfn` | 1 GB tight, 2 GB comfortable |
-| Raspberry Pi 4B 4-8 GB / Pi 5 | `yunet-mfn` | 25 min for 400 PGM |
-| Orange Pi 5 (RK3588S) | `yunet-mfn` | 4× A76 + NPU (M6+) |
-| Apple Silicon (M1/M2/M3) | `yunet-mfn` (CoreML EP) | 8 GB+ |
-| x86-64 + NVIDIA | `yunet-mfn` (default) / `buffalo_l` (opt-in) | CUDA EP on InsightFace |
+| Raspberry Pi 3B / 3B+ (1 GB) | `yunet-sface` | Open swap 1 GB |
+| Raspberry Pi 4B 1-2 GB | `yunet-sface` | 1 GB tight, 2 GB comfortable |
+| Raspberry Pi 4B 4-8 GB / Pi 5 | `yunet-sface` (default) / `yunet-arcface --quant int8` (high-precision) | INT8 ~66 MB on disk, ~256 MB RAM |
+| Orange Pi 5 (RK3588S) | `yunet-sface` | 4× A76 + NPU (M6+) |
+| Apple Silicon (M1/M2/M3) | `yunet-sface` (CoreML EP) | 8 GB+ |
+| x86-64 + NVIDIA | `yunet-arcface --quant fp32` (high-precision) / `buffalo_l` (opt-in) | CUDA EP on ArcFace |
 
 ---
 

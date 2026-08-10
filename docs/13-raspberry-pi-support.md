@@ -187,13 +187,18 @@ def test_no_model_files(repo_root):
 
 | 你的硬件 | 推荐 pack | 备注 |
 |---|---|---|
-| Pi 3B 1 GB | `yunet-mfn` | **唯一**可选项；建议开 swap |
-| Pi 4B 1-2 GB | `yunet-mfn` | 1 GB 跑有点紧 |
-| Pi 4B 4 GB+ / Pi 5 | `yunet-mfn` (默认) / `scrfd-500m-mfn` (M5 后期) | Pi 5 跑 yunet-mfn ~12 min |
-| RK3588 (4-16 GB) | `yunet-mfn` (CPU) / NPU EP (M6+) | 4× A76 + NPU 跑起来飞快 |
-| Apple Silicon Mac | `yunet-mfn` (默认) / CoreML EP 加速 | macOS 12+ 有 CoreML EP |
-| 任意 x86-64 + NVIDIA | `buffalo_l` (若个人/学术) / 自训 (若商业) | x86 上全开 |
-| NAS (Synology / QNAP) | `yunet-mfn` | ARM NAS 一般 2-4 GB RAM |
+| Pi 3B 1 GB | `yunet-sface` | **唯一**可选项；建议开 swap |
+| Pi 4B 1-2 GB | `yunet-sface` | 1 GB 跑有点紧 |
+| Pi 4B 4 GB+ / Pi 5 | `yunet-sface` (默认) / `yunet-arcface --quant int8` (高精度档) | INT8 占用 ~66 MB on disk + ~256 MB RAM |
+| RK3588 (4-16 GB) | `yunet-sface` (CPU) / `yunet-arcface --quant int8` (高精度) / NPU EP (M6+) | 4× A76 + NPU 跑起来飞快 |
+| Apple Silicon Mac | `yunet-sface` (默认) / `yunet-arcface --quant fp32` (高精度) / CoreML EP 加速 | macOS 12+ 有 CoreML EP |
+| 任意 x86-64 + NVIDIA | `yunet-arcface --quant fp32` (高精度, GPU) / `buffalo_l` (opt-in NC-research) | x86 上全开 |
+| NAS (Synology / QNAP) | `yunet-sface` | ARM NAS 一般 2-4 GB RAM |
+
+> **高精度档（`yunet-arcface`）切换提示**：
+> - `pick-face.toml` 设 `[runtime] pack = "yunet-arcface"`，`[clustering] merge_threshold = 0.55`（512-D 余弦距离）
+> - `pick-face init-models --quant {fp32,int8} --allow-network` 单独下载变体（FP32 ~261 MB / INT8 ~66 MB）
+> - GPU 推荐：x86 + onnxruntime-gpu + `provider = "cuda"`；Pi 仍用 CPU EP
 
 ## 12. 引用与延伸阅读
 

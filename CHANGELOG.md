@@ -9,6 +9,109 @@ the full policy.
 
 ---
 
+## [2.1.0] - 2026-08-10 — High-precision tier (yunet-arcface)
+
+Adds a second bundled model pack (`yunet-arcface`) alongside the
+default `yunet-sface`. Same `--pack` switch, same `pick-face` API,
+same core wheel — but the new pack ships 512-D **ArcFace R100**
+embeddings (vs. SFace 128-D) for higher-precision clustering on
+photographic datasets. Inside the route-B contract, this is a
+**pure addition** — existing `yunet-sface` configs keep working
+unchanged.
+
+> **License posture:** `yunet-arcface` is **PERMISSIVE** under the
+> Apache-2.0 / MIT split. The detector (YuNet) is MIT. The
+> embedder weights (ArcFace R100) are released under Apache-2.0 by
+> ONNX Model Zoo. AC-9 does **not** fire — no acknowledgment needed.
+> The ArcFace model was trained on refined **MS-Celeb-1M**; the
+> weights are Apache-2.0 but the **training-data rights remain the
+> user's responsibility**. See
+> <https://github.com/onnx/models/blob/main/validated/vision/body_analysis/arcface/README.md>.
+
+### Highlights
+
+- **New model pack** `yunet-arcface` (YuNet + ArcFace R100, 512-D).
+  Two QUANT variants: **FP32** (~261 MB, x86 + GPU) and **INT8**
+  (~66 MB, ARM / Pi 4/5). Default is FP32.
+- **CLI**: `pick-face init-models --pack yunet-arcface --quant {fp32,int8} --allow-network`.
+  Only the requested variant is downloaded (FP32 request skips
+  INT8, saving ~66 MB).
+- **Clustering threshold**: for 512-D embeddings, set
+  `clustering.merge_threshold = 0.55` in `pick-face.toml`. The
+  SFace default (`0.0`) is too aggressive at 512-D.
+- **GPU / providers**: `runtime.provider = "cuda"` now plumbs
+  through to the ArcFace ORT session. Install `onnxruntime-gpu`
+  (`uv pip install -U onnxruntime-gpu` or
+  `uv pip install -e ".[gpu]"`). Pre-existing gap I-7 (providers
+  not passed to `build_embedder`) is fixed.
+- **Thread policy**: ArcFace's `intra_op_num_threads` defaults to
+  `cpu_count // 2` instead of being hardcoded to `1`. SFace keeps
+  its conservative policy. Override with `OMP_NUM_THREADS`.
+
+### Pinned weights (audit-friendly)
+
+| Variant | URL | SHA256 | Size |
+|---|---|---|---|
+| YuNet detector | `https://media.githubusercontent.com/media/opencv/opencv_zoo/<pinned-commit>/models/face_detection_yunet/yunet_2023mar.onnx` | `8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4` | 232,589 B |
+| ArcFace FP32 | `https://media.githubusercontent.com/media/onnx/models/<pinned-commit>/validated/vision/body_analysis/arcface/model/arcfaceresnet100-8.onnx` | `f3a6bc281e72f88862f5748b53be3d76b3b48f8f1ab1f4a537941bdc4e1b01da` | 261,036,388 B |
+| ArcFace INT8 | `https://media.githubusercontent.com/media/onnx/models/<pinned-commit>/validated/vision/body_analysis/arcface/model/arcfaceresnet100-11-int8.onnx` | `c625ca68a422418c48aa84f73341337e0a92b111f327909005d1eec07c95f936` | 65,764,892 B |
+
+### Migration from `yunet-sface`
+
+```toml
+# pick-face.toml — switch to high-precision tier
+[runtime]
+pack = "yunet-arcface"
+
+[clustering]
+merge_threshold = 0.55  # 512-D cosine hint
+```
+
+```bash
+# download INT8 (ARM-friendly) or FP32 (x86 + GPU)
+pick-face init-models --pack yunet-arcface --quant int8 --allow-network
+```
+
+If you only want the default tier, do **nothing** — `yunet-sface`
+remains the default pack and all v2.0.x configs keep working.
+
+### Architecture extensions (also in this release)
+
+These landed alongside to make the new pack work end-to-end:
+
+- **B-2 / B-3**: `PackDescriptor` gained `embedder_alternates: list[EmbedderVariant] | None`.
+  `ModelPack.Protocol.expected_files` took a `variant: str | None = None` keyword
+  so multi-quant packs can return a variant-aware list.
+- **B-1**: `init-models` gained a `--quant` option. `ModelPack.Protocol.download_to`
+  took a `quant: str = "fp32"` keyword so single-variant packs can ignore it.
+- **I-2**: variant selection is a single source of truth — `download_to(quant=)`
+  writes `target_dir/.quant`, `build_embedder()` reads it. `PICK_FACE_ARCFACE_QUANT`
+  env var is a fallback.
+- **I-7**: `runtime.load_pack_runner` now passes `providers=providers` to
+  `pack.build_embedder(...)`. Previously ORT picked CPU only.
+- **I-6**: ArcFace threads default to `cpu_count // 2`; `OMP_NUM_THREADS` wins.
+
+### Verification
+
+- `uv run pytest tests/unit/test_yunet_arcface_pack.py` — 26 tests,
+  covering discovery, LicenseClass, SPDX, tags, variants, providers,
+  thread policy, channel-order preprocessing, AC-9 PERMISSIVE pass-through.
+- `uv run pytest tests/unit/test_route_b_guards.py tests/unit/test_packaging.py`
+  — existing route B + packaging guards still pass.
+- `uv run pytest tests/integration/test_real_faces_ac1.py -m real_data`
+  — parametrized over `("yunet-sface", 0.0, SOFT)` and
+  `("yunet-arcface", 0.55, SOFT)`.
+
+### Notes
+
+- `yunet-mfn` is still a registered alias (deprecated, points at
+  `yunet-sface`) for v1.x config back-compat. No new alias is added.
+- The `ArcFaceR100Embedder.preprocess()` static method exposes the
+  RGB→BGR + `(x-127.5)/128` + NCHW transform so the unit tests can
+  assert channel order without running real weights.
+
+---
+
 ## [2.0.0] - 2026-08-07 — Route B (model pack plugins)
 
 The **route B** milestone: pick-face is no longer bound to InsightFace.

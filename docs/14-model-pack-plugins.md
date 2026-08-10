@@ -88,9 +88,11 @@ packages = ["src/pick_face_modelpack_yunet"]
 ### 3.2 `src/pick_face_modelpack_yunet/pack.py`
 
 ```python
-"""YuNet detector + MobileFaceNet embedder pack (Apache-2.0).
+"""YuNet detector + MobileFaceNet embedder pack (MIT).
 
-注册为 `yunet-mfn`，是 pick-face 2.0 的默认 pack。
+注册为 `yunet-mfn`，是 pick-face 2.0 起保留的 deprecated alias（指向
+`yunet-sface`），用于 v1.x 配置文件向后兼容。2.0 默认 pack id 是
+`yunet-sface`（YuNet + SFace，OpendCV Zoo per-model MIT）。
 """
 
 from __future__ import annotations
@@ -251,8 +253,9 @@ uv pip install pick-face-modelpack-yunet
 pick-face doctor
 # 输出:
 #   Installed model packs:
-#     - yunet-mfn (Apache-2.0)         — arm-friendly, default
-#     - buffalo_l  (NC-research)       — opt-in only
+#     - yunet-sface    (MIT)              — arm-friendly, default
+#     - yunet-arcface  (Apache-2.0)        — high-precision tier
+#     - buffalo_l      (NC-research)      — opt-in only
 ```
 
 ## 5. LicenseClass 与 AC-9 联动
@@ -299,12 +302,19 @@ if expected.startswith("<pin-on-first-build>"):
 
 | Pack id | 厂商 | LicenseClass | 体积 | 推荐场景 |
 |---|---|---|---|---|
-| `yunet-mfn` | OpenCV Zoo | PERMISSIVE | 5 MB | **默认**，ARM / Pi |
-| `buffalo_l` | InsightFace | NC_RESEARCH | 325 MB | 个人/学术，x86 + GPU |
-| `buffalo_sc` | InsightFace | NC_RESEARCH | 35 MB | 个人/学术，ARM 上勉强 |
-| `antelopev2` | InsightFace | NC_RESEARCH | 180 MB | 个人/学术 + GPU |
+| `yunet-sface` | OpenCV Zoo | PERMISSIVE (MIT) | ~10 MB | **默认**，ARM / Pi 3B / 树莓派 5 |
+| `yunet-arcface` | ONNX Model Zoo | PERMISSIVE (Apache-2.0) | FP32 ~261 MB / INT8 ~66 MB | **高精度档**（同列 core，FP32 在 x86 + GPU；INT8 在 Pi 4/5） |
+| `buffalo_l` | InsightFace | NC_RESEARCH | 325 MB | 个人/学术，x86 + GPU（opt-in 插件） |
+| `buffalo_sc` | InsightFace | NC_RESEARCH | 35 MB | 个人/学术，ARM 上勉强（opt-in 插件） |
+| `antelopev2` | InsightFace | NC_RESEARCH | 180 MB | 个人/学术 + GPU（opt-in 插件） |
 | `scrfd-500m-mfn` | (M5 后) | PERMISSIVE | 35 MB | Pi 4B / x86 兼顾 |
 | `my-arcface-r50` | 自训 | PERMISSIVE / NC (视训练数据) | 自定 | 商业首选 |
+
+> **`yunet-arcface` 关键提示**：
+> - 512-D embeddings，高精度场景；FP32 强烈推荐 x86 + GPU（CUDA / DirectML），INT8 在 ARM / 内存紧时降级。
+> - 训练数据：refined MS-Celeb-1M；权重本身 Apache-2.0，训练数据 rights 由用户负责（见 [ONNX Model Zoo README](https://github.com/onnx/models/blob/main/validated/vision/body_analysis/arcface/README.md)）。
+> - 在 `pick-face.toml` 中建议 `clustering.merge_threshold = 0.55`（512-D 余弦距离一档）。`yunet-sface` 仍用 0.0。
+> - 切换：`pick-face init-models --pack yunet-arcface --quant {fp32,int8} --allow-network`。
 
 ## 9. 写自己 pack 的检查清单
 

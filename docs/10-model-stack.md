@@ -11,13 +11,15 @@
 
 - **核心包** (`pick-face`) 通过 Python entry-points `pick_face.model_packs` 发现已安装的 model pack
 - **每个 pack** 是独立 PyPI 包，自带 detector + embedder + 权重 URL + SHA256 + license 声明
-- **默认 pack** 是 `yunet-mfn`（OpenCV Zoo YuNet + MobileFaceNet INT8，Apache-2.0）—— 让树莓派 3B 1 GB RAM 也能跑
-- **可选 pack** `buffalo_l` / `buffalo_sc` / `antelopev2` 来自 InsightFace，独立插件包，**默认不安装**
-- **AC-9 商业合规护栏**仍生效，但仅对 `LicenseClass.NC_RESEARCH` 的 pack 触发 —— `yunet-mfn` 默认放行
+- **默认 pack** 是 `yunet-sface`（OpenCV Zoo per-model MIT，YuNet + SFace INT8，128-D）—— 让树莓派 3B 1 GB RAM 也能跑
+- **可选高精度档** `yunet-arcface`（ONNX Model Zoo ArcFace R100，Apache-2.0 + MIT detector，512-D），与 `yunet-sface` 同列 core wheel
+- **可选 NC-research 档** `buffalo_l` / `buffalo_sc` / `antelopev2` 来自 InsightFace，独立插件包，**默认不安装**
+- **AC-9 商业合规护栏**仍生效，但仅对 `LicenseClass.NC_RESEARCH` 的 pack 触发 —— `yunet-sface` / `yunet-arcface` 默认放行
 
-| Pack id | 体积 | RAM | LFW | LicenseClass | Pi 3B 1GB |
+| Pack id | 体积 | RAM | LFW (FP32) | LicenseClass | Pi 3B 1GB |
 |---|---|---|---|---|---|
-| **yunet-mfn**（默认） | **5 MB** | **150 MB** | 99.50% | PERMISSIVE | ✅ |
+| **yunet-sface**（默认） | **~10 MB** | **~150 MB** | SFace 99.50% | PERMISSIVE (MIT) | ✅ |
+| **yunet-arcface**（高精度） | **FP32 ~261 MB / INT8 ~66 MB** | **~256 MB** | ArcFace 99.77% | PERMISSIVE (Apache-2.0) | ⚠️ INT8 only |
 | buffalo_sc (InsightFace) | 35 MB | 500 MB | 99.65% | NC_RESEARCH | ⚠️ |
 | buffalo_l (InsightFace) | 325 MB | 2.5 GB | 99.83% | NC_RESEARCH | ❌ |
 
@@ -238,7 +240,8 @@ model_dir = "/srv/models/commercial"
 
 | Pack / 库 | 许可证 | 商业可用 | AC-9 gate |
 |---|---|---|---|
-| **yunet-mfn**（OpenCV Zoo） | **Apache-2.0** | **✅** | 不触发 |
+| **yunet-sface**（OpenCV Zoo per-model） | **MIT** | **✅** | 不触发 |
+| **yunet-arcface**（ONNX Model Zoo + OpenCV Zoo） | **Apache-2.0 + MIT** | **✅** | 不触发；训练数据（MS-Celeb-1M）rights 用户负责 |
 | buffalo_l / buffalo_sc / antelopev2 权重 | InsightFace 自定义 | ❌ | 触发 |
 | onnxruntime | MIT | ✅ | — |
 | hnswlib | Apache-2.0 | ✅ | — |
