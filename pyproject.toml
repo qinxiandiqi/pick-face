@@ -40,13 +40,18 @@ dependencies = [
 ]
 
 [project.entry-points."pick_face.model_packs"]
-# Bundled default pack (route B). Apache-2.0, Pi 3B friendly, ~10 MB.
+# Bundled default pack (route B). MIT per opencv_zoo per-model LICENSE
+# (face_detection_yunet/ + face_recognition_sface/), Pi 3B friendly, ~10 MB.
 # Renamed from `yunet-mfn` (MobileFaceNet INT8) to `yunet-sface` after
 # upstream removed the MobileFaceNet weights from opencv_zoo in 2025.
 # The deprecated `yunet-mfn` id is still registered (as an alias that
 # points users at yunet-sface) so existing v1.x configs keep working.
 yunet-sface = "pick_face.platform.packs.yunet_sface:YuNetSfacePack"
 yunet-mfn = "pick_face.platform.packs.yunet_sface:_DeprecatedYuNetMFNPack"
+# High-precision tier (route B). YuNet detector (MIT) + ArcFace R100
+# embedder (Apache-2.0 from ONNX Model Zoo), 512-D, FP32+INT8 variants.
+# Use `--quant int8` for ARM / low-RAM hosts (~66 MB on disk).
+yunet-arcface = "pick_face.platform.packs.yunet_arcface:YuNetArcFacePack"
 
 [project.optional-dependencies]
 # Single-format extras. None of these change core behavior; they only add

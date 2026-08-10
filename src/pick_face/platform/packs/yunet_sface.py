@@ -78,18 +78,21 @@ YUNET_SFACE_DESCRIPTOR = PackDescriptor(
     detector_url=YUNET_URL,
     embedder_url=SFACE_URL,
     license_class=LicenseClass.PERMISSIVE,
-    license_name="Apache-2.0 (OpenCV Zoo)",
-    license_spdx="Apache-2.0",
+    license_name="MIT (OpenCV Zoo, per-model LICENSE files)",
+    license_spdx="MIT",
     license_notice_text="",  # permissive — no notice required
     accuracy_lfw=0.9945,  # SFace INT8 author-reported; YuNet alone ~99.16%
     notes=(
         "ARM-friendly default pack. ~10 MB on disk, ~150 MB RAM at runtime. "
         "Recommended for Pi 3B / RK3588 / low-end laptops. AC-9 commercial "
-        "compliant (Apache-2.0). Replaces the yunet-mfn pack (MobileFaceNet "
-        "INT8) after upstream removed the MobileFaceNet weights during the "
-        "2025-07-31 opencv_zoo → HuggingFace migration."
+        "compliant (MIT per opencv_zoo per-model LICENSE). Replaces the "
+        "yunet-mfn pack (MobileFaceNet INT8) after upstream removed the "
+        "MobileFaceNet weights during the 2025-07-31 opencv_zoo → "
+        "HuggingFace migration."
     ),
     tags=["arm-friendly", "low-ram", "default"],
+    detector_license_spdx="MIT",
+    embedder_license_spdx="MIT",
 )
 
 
@@ -181,15 +184,32 @@ class SFaceEmbedder(Embedder):
 
     dim = 128  # SFace embeds to 128-D (same dim as the deprecated MFN)
 
-    def __init__(self, onnx_path: Path) -> None:
+    def __init__(self, onnx_path: Path, *, providers=None) -> None:
+        # The SFace pack predates route B's GPU plumbing and intentionally
+        # pins CPU for ARM-friendly predictability on Pi 3B. Honour a
+        # caller-supplied providers chain if it actually contains a GPU
+        # provider (warn once otherwise).
+        import warnings as _warnings
+
         import onnxruntime as ort
+
+        chosen = list(providers) if providers else ["CPUExecutionProvider"]
+
+        chosen = list(providers) if providers else ["CPUExecutionProvider"]
+        if providers and not any("CUDA" in p or "Dml" in p or "Tensorrt" in p for p in providers):
+            _warnings.warn(
+                "yunet-sface ignores the providers argument; the pack "
+                "is hard-coded to CPUExecutionProvider for ARM "
+                "predictability. Use yunet-arcface for GPU support.",
+                stacklevel=2,
+            )
 
         sess_opts = ort.SessionOptions()
         sess_opts.intra_op_num_threads = 1  # Pi 3B: avoid context thrash
         sess_opts.inter_op_num_threads = 1
         sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         self._sess = ort.InferenceSession(
-            str(onnx_path), sess_options=sess_opts, providers=["CPUExecutionProvider"]
+            str(onnx_path), sess_options=sess_opts, providers=chosen
         )
         self._input_name = self._sess.get_inputs()[0].name
 
@@ -228,7 +248,8 @@ class ArcFaceAligner(Aligner):
 class YuNetSfacePack(ModelPack):
     descriptor = YUNET_SFACE_DESCRIPTOR
 
-    def expected_files(self) -> list[str]:
+    def expected_files(self, *, variant: str | None = None) -> list[str]:
+        # Single-variant pack: variant arg ignored.
         return [YUNET_FILENAME, SFACE_FILENAME]
 
     def build_detector(
@@ -245,7 +266,12 @@ class YuNetSfacePack(ModelPack):
         _verify_sha256(onnx, YUNET_SHA256, label="YuNet")
         return YuNetDetector(onnx, det_size=det_size)
 
-    def build_embedder(self, model_dir: Path) -> Embedder:
+    def build_embedder(
+        self,
+        model_dir: Path,
+        *,
+        providers=None,
+    ) -> Embedder:
         onnx = model_dir / self.descriptor.pack_id / SFACE_FILENAME
         if not onnx.exists():
             from pick_face.core.errors import ModelNotFoundError
@@ -255,12 +281,18 @@ class YuNetSfacePack(ModelPack):
                 f"Run `pick-face init-models --pack yunet-sface --allow-network`."
             )
         _verify_sha256(onnx, SFACE_SHA256, label="SFace")
-        return SFaceEmbedder(onnx)
+        return SFaceEmbedder(onnx, providers=providers)
 
     def build_aligner(self) -> Aligner:
         return ArcFaceAligner()
 
-    def download_to(self, target_dir: Path, *, progress=None) -> list[Path]:
+    def download_to(
+        self,
+        target_dir: Path,
+        *,
+        quant: str = "fp32",  # noqa: ARG002 — single-variant pack
+        progress=None,
+    ) -> list[Path]:
         """Fetch from GitHub release URLs. Pure stdlib so the pack
         stays dependency-free beyond numpy / opencv / onnxruntime."""
 
@@ -317,7 +349,7 @@ class _DeprecatedYuNetMFNPack(ModelPack):
         tags=["deprecated"],
     )
 
-    def expected_files(self) -> list[str]:
+    def expected_files(self, *, variant: str | None = None) -> list[str]:
         return []
 
     def build_detector(self, model_dir: Path, ctx_id: int = 0, det_size=(320, 320)) -> Detector:  # noqa: ARG002
@@ -327,7 +359,12 @@ class _DeprecatedYuNetMFNPack(ModelPack):
             "Use `pick-face init-models --pack yunet-sface` instead."
         )
 
-    def build_embedder(self, model_dir: Path) -> Embedder:  # noqa: ARG002
+    def build_embedder(
+        self,
+        model_dir: Path,
+        *,
+        providers=None,  # noqa: ARG002
+    ) -> Embedder:
         raise RuntimeError(
             "pack 'yunet-mfn' is deprecated (upstream MobileFaceNet INT8 "
             "weights were removed from opencv_zoo in 2025). "
@@ -337,7 +374,13 @@ class _DeprecatedYuNetMFNPack(ModelPack):
     def build_aligner(self) -> Aligner:
         raise RuntimeError("pack 'yunet-mfn' is deprecated; use yunet-sface.")
 
-    def download_to(self, target_dir: Path, *, progress=None) -> list[Path]:  # noqa: ARG002
+    def download_to(
+        self,
+        target_dir: Path,
+        *,
+        quant: str = "fp32",  # noqa: ARG002
+        progress=None,  # noqa: ARG002
+    ) -> list[Path]:
         raise RuntimeError(
             "pack 'yunet-mfn' is deprecated (upstream MobileFaceNet INT8 "
             "weights were removed from opencv_zoo in 2025). "
@@ -365,9 +408,11 @@ def _rough_quality_chip(chip: np.ndarray) -> float:
 
 
 def _verify_sha256(path: Path, expected: str, *, label: str) -> None:
-    if expected.startswith("<TBD"):
-        # First-build placeholder; emit a warning and skip. CI populates
-        # the real hash before any release is tagged.
+    # First-build placeholder: any of these strings means the pack
+    # author hasn't pinned the SHA yet — emit a warning and skip. CI
+    # populates the real hash before any release is tagged.
+    placeholder_prefixes = ("<TBD", "<pin-on-first-build", "<pin-on-first-download")
+    if any(expected.startswith(p) for p in placeholder_prefixes):
         import warnings
 
         warnings.warn(f"{label} SHA256 not pinned; skipping verification", stacklevel=2)

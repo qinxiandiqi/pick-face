@@ -165,8 +165,8 @@ def init_models(
         typer.Option(
             "--pack",
             help=(
-                "Model pack id to download (e.g. 'yunet-mfn', 'buffalo_l'). "
-                "Defaults to `[runtime].pack` in pick-face.toml."
+                "Model pack id to download (e.g. 'yunet-sface', 'yunet-arcface', "
+                "'buffalo_l'). Defaults to `[runtime].pack` in pick-face.toml."
             ),
         ),
     ] = None,
@@ -185,6 +185,17 @@ def init_models(
             help="Skip the interactive 'I AGREE' confirmation prompt (NC packs only).",
         ),
     ] = False,
+    quant: Annotated[
+        str,
+        typer.Option(
+            "--quant",
+            help=(
+                "Embedder quant for packs that ship multiple variants "
+                "(e.g. yunet-arcface ships fp32 and int8). Default: fp32. "
+                "Ignored for single-variant packs."
+            ),
+        ),
+    ] = "fp32",
     config_file: Annotated[
         Path, typer.Option("--config", "-c", help="Path to pick-face.toml.")
     ] = Path("pick-face.toml"),
@@ -249,7 +260,7 @@ def init_models(
     target_dir = cfg.runtime.model_dir / pack_id
     target_dir.mkdir(parents=True, exist_ok=True)
     try:
-        selected.download_to(target_dir)
+        selected.download_to(target_dir, quant=quant)
     except Exception as e:
         _exit(ModelLoadError(f"download failed for pack {pack_id!r}: {e}"))
 
@@ -261,6 +272,16 @@ def init_models(
             f"[green]downloaded[/green] {pack_id} into {target_dir} "
             f"(license: {selected.descriptor.license_name}, no ack required)"
         )
+        # N-4: tip for high-precision ArcFace users.
+        if (
+            selected.descriptor.embedder_alternates
+            and pack_id == "yunet-arcface"
+        ):
+            console.print(
+                "[yellow]Tip:[/yellow] for high-precision 512-D clustering, "
+                "set `clustering.merge_threshold = 0.55` in pick-face.toml "
+                "(the SFace default of 0.0 under-merges at 512-D)."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1126,7 +1147,7 @@ def doctor(
     console.print("[bold]Installed model packs[/bold]")
     packs = discover_packs()
     if not packs:
-        console.print("  (none — only the bundled `yunet-mfn` is shipped with core)")
+        console.print("  (none — only the bundled `yunet-sface` and `yunet-arcface` are shipped with core)")
     for pid in sorted(packs):
         p = packs[pid]
         d = p.descriptor

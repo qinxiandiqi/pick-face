@@ -20,6 +20,7 @@ fetched by `init-models` (or supplied by the user) into
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -63,6 +64,27 @@ class LicenseClass(str, Enum):
 
 
 @dataclass(frozen=True)
+class EmbedderVariant:
+    """One alternate embedder weight file for a multi-variant pack.
+
+    A pack that exposes multiple variants (e.g. yunet-arcface ships both
+    a 248 MiB FP32 and a 63 MiB INT8 ONNX) declares each variant here.
+    The pack's `PackDescriptor.embedder_sha256 / embedder_size_bytes /
+    embedder_url` are the *default* variant; alternates carry the rest.
+
+    Reference: docs/14 §6.2.
+    """
+
+    quant: str  # free-form tag like "fp32" / "int8" / "fp16"
+    filename: str  # e.g. "arcface_r100_int8.onnx"
+    sha256: str
+    size_bytes: int
+    url: str
+    accuracy_lfw: float | None = None  # author-reported LFW (0..1)
+    notes: str = ""
+
+
+@dataclass(frozen=True)
 class PackDescriptor:
     """Human-readable metadata for a model pack.
 
@@ -70,6 +92,16 @@ class PackDescriptor:
       * `pick-face init-models` to print the License Notice
       * `pick-face report` to render the "Model & License" header
       * `pick-face doctor` to show available packs on this host
+
+    License fields:
+      * `license_class` / `license_name` / `license_spdx` / `license_notice_text`
+        describe the *whole pack* (used by AC-9).
+      * `detector_license_spdx` / `embedder_license_spdx` describe the
+        detector and embedder weights individually. They default to
+        `license_spdx` for backward compatibility but can differ — e.g.
+        `yunet-arcface` ships a YuNet detector under MIT
+        (opencv_zoo/face_detection_yunet) and an ArcFace embedder under
+        Apache-2.0 (onnx/models).
     """
 
     pack_id: str  # e.g. "yunet-mfn", "buffalo_l", "scrfd-500m-mfn"
@@ -77,11 +109,11 @@ class PackDescriptor:
     detector_name: str  # e.g. "YuNet (yunet_2023mar.onnx)"
     embedder_name: str  # e.g. "MobileFaceNet (mfn_align1k.onnx)"
     detector_sha256: str  # integrity check on disk
-    embedder_sha256: str
+    embedder_sha256: str  # the *default* variant's sha (see also embedder_alternates)
     detector_size_bytes: int
-    embedder_size_bytes: int
+    embedder_size_bytes: int  # default variant
     detector_url: str | None  # filled by the pack, may be None for user_supplied
-    embedder_url: str | None
+    embedder_url: str | None  # default variant
     license_class: LicenseClass
     license_name: str  # e.g. "Apache-2.0", "InsightFace NC-research"
     license_spdx: str  # SPDX id for the LICENSE file; "" if user-supplied
@@ -90,6 +122,11 @@ class PackDescriptor:
     notes: str = ""
     # Free-form tags (e.g. ["arm-friendly", "low-ram", "no-landmark"])
     tags: list[str] = field(default_factory=list)
+    # Alternate embedder variants (multi-quant packs). Empty/None = single-variant.
+    embedder_alternates: list[EmbedderVariant] | None = None
+    # Per-component SPDX license ids. Default to license_spdx when unset.
+    detector_license_spdx: str = ""
+    embedder_license_spdx: str = ""
 
 
 @runtime_checkable
@@ -113,8 +150,19 @@ class ModelPack(Protocol):
         """Construct a Detector. Implementations may load weights lazily."""
         ...
 
-    def build_embedder(self, model_dir: Path) -> Embedder:
-        """Construct an Embedder. Implementation owns model lifetime."""
+    def build_embedder(
+        self,
+        model_dir: Path,
+        *,
+        providers: Sequence[str] | None = None,
+    ) -> Embedder:
+        """Construct an Embedder. Implementation owns model lifetime.
+
+        `providers` is the ONNX Runtime execution provider chain
+        (e.g. ["CUDAExecutionProvider", "CPUExecutionProvider"]).
+        Implementations may ignore it (e.g. legacy SFace pack which
+        hard-codes CPU). New packs should honor it so GPU users get CUDA.
+        """
         ...
 
     def build_aligner(self) -> Aligner:
@@ -122,20 +170,35 @@ class ModelPack(Protocol):
         default ArcFace-style 5-pt aligner is reused across packs."""
         ...
 
-    def expected_files(self) -> list[str]:
+    def expected_files(self, *, variant: str | None = None) -> list[str]:
         """Filenames that must exist under model_dir/pack_id/ for the
-        pack to load. `init-models` verifies these after download."""
+        pack to load. `init-models` verifies these after download.
+
+        For single-variant packs (no `embedder_alternates`) the
+        `variant` argument is ignored. Multi-variant packs interpret it
+        as the quant tag ("fp32" / "int8" / …); if omitted the pack
+        falls back to its `.quant` marker file (written by
+        `download_to`) and finally to the descriptor's default variant.
+        """
         ...
 
     def download_to(
         self,
         target_dir: Path,
         *,
+        quant: str = "fp32",
         progress: callable | None = None,  # type: ignore[valid-type]
     ) -> list[Path]:
         """Fetch the weights into target_dir. Implementations may use
         any source (HTTP mirror, GitHub release, HF model hub, …).
-        Returns the list of files written. Network calls live here."""
+        Returns the list of files written. Network calls live here.
+
+        `quant` selects which embedder variant to download for
+        multi-variant packs (e.g. "fp32" / "int8"). Single-variant
+        packs ignore it. The selected quant is also recorded in
+        `target_dir/.quant` so `build_embedder` can re-derive it
+        without an env var.
+        """
         ...
 
 

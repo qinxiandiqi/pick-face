@@ -266,11 +266,10 @@ def load_pack_runner(cfg: PickFaceConfig) -> PackRunner:
 
     model_dir = cfg.runtime.model_dir
     det_size = (cfg.detection.det_size, cfg.detection.det_size)
-    detector = pack.build_detector(model_dir, det_size=det_size)
-    embedder = pack.build_embedder(model_dir)
-    aligner = pack.build_aligner()
-
     providers = resolve_providers(cfg.runtime.provider)
+    detector = pack.build_detector(model_dir, det_size=det_size)
+    embedder = pack.build_embedder(model_dir, providers=providers)
+    aligner = pack.build_aligner()
     return PackRunner(
         pack=pack,
         detector=detector,
