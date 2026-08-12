@@ -256,7 +256,7 @@ docker-compose.override.yaml
 *.dockerfile.bak
 
 # ============================================================
-# 13. Node / 前端 (v0.x 未用, 预留)
+# 13. Node / 前端 (M7 — Vite + React + TypeScript SPA)
 # ============================================================
 node_modules/
 npm-debug.log*
@@ -267,6 +267,27 @@ pnpm-debug.log*
 .next/
 .nuxt/
 .vite/
+
+# M7 — SPA source lives at src/pick_face/web/app/. We commit pnpm-lock.yaml
+# (for reproducible CI installs) but not local build cache / store / tsc emit.
+src/pick_face/web/app/.vite/
+src/pick_face/web/app/dist/
+src/pick_face/web/app/*.tsbuildinfo
+src/pick_face/web/app/src/*.tsbuildinfo
+src/pick_face/web/app/vite.config.d.ts
+src/pick_face/web/app/vite.config.js
+.pnpm-store/
+playwright-report/
+test-results/
+playwright/.cache/
+
+# M7 — vite build output. The CI `frontend-build` job runs `pnpm build`
+# before `uv build`, so the wheel always carries the freshest bundle.
+# We never commit built artifacts; this also keeps the source-only sdist
+# (see pyproject.toml [tool.hatch.build.targets.sdist] exclude) honest.
+src/pick_face/web/static/index.html
+src/pick_face/web/static/assets/
+src/pick_face/web/static/favicon.svg
 
 # ============================================================
 # 14. 大文件 / 二进制
