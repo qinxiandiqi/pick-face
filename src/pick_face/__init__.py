@@ -12,7 +12,7 @@ Refer to docs/AGENTS.md for the full documentation index and
 docs/11-commercial-compliance.md for commercial deployment compliance.
 """
 
-__version__ = "2.0.0.dev0"
+__version__ = "3.0.0.dev0"
 __license__ = "Apache-2.0"
 
 from pick_face.core.config import (  # noqa: E402, F401

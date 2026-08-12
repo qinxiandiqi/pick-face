@@ -1,6 +1,6 @@
 [project]
 name = "pick-face"
-description = "Local offline image face recognition & organization CLI"
+description = "Local-first face-photo gallery web service"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Jianan" }]
@@ -76,6 +76,8 @@ dev = [
     "pytest>=8,<9",
     "pytest-cov>=5,<6",
     "pytest-benchmark>=4,<5",
+    "pytest-asyncio>=0.23,<1",
+    "httpx>=0.27,<1",
     "ruff>=0.6,<1",
     "mypy>=1.10,<2",
     "pre-commit>=3.8,<5",
@@ -89,13 +91,26 @@ docs = [
     "mkdocs-material>=9.5,<10",
 ]
 
+# Web service extras (v3.0). FastAPI app + background workers + file
+# watcher. Kept optional so the v2.x CLI install (`uv pip install
+# pick-face`) doesn't pull in fastapi/uvicorn if you only want CLI.
+# Install with: `uv pip install -e ".[web]"`.
+web = [
+    "fastapi>=0.110,<1",
+    "uvicorn[standard]>=0.27,<1",
+    "watchdog>=4,<7",
+    "apscheduler>=3.10,<4",
+    "python-multipart>=0.0.9,<1",
+]
+
 # Convenience aggregators.
 all-decode = ["pick-face[heic,raw]"]
 all-gpu = ["pick-face[gpu]"]
-all = ["pick-face[heic,raw,gpu]"]
+all = ["pick-face[heic,raw,gpu,web]"]
 
 [project.scripts]
 pick-face = "pick_face.cli:main"
+pick-face-web = "pick_face.web_cli:main"
 
 [project.urls]
 Documentation = "https://github.com/qinxiandiqi/pick-face/blob/main/docs/AGENTS.md"
