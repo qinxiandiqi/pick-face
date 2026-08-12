@@ -1,13 +1,13 @@
 // Scan progress banner — polls /api/scan/jobs/active, opens an SSE stream
 // when a job is running, renders a Progress bar. On `end` event: closes
-// the EventSource, fires a sonner toast, invalidates persons cache.
+// the EventSource, fires a toast via the @/lib/toast facade, invalidates
+// persons cache.
 //
 // Mounted at the AppShell level (above the route outlet) so the banner
 // stays visible while the user navigates between pages.
 
 import * as React from "react";
 import { useEffect } from "react";
-import { toast } from "sonner";
 import { Loader2, X } from "lucide-react";
 
 import {
@@ -15,6 +15,7 @@ import {
   useStartScanMutation,
 } from "@/lib/api/hooks";
 import { openScanEventStream } from "@/lib/sse";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 
@@ -93,7 +94,11 @@ export function ScanProgressBanner(): React.JSX.Element | null {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => startScan.mutate("incremental")}
+          onClick={() =>
+            startScan.mutate("incremental", {
+              onError: (e) => toast.fromError(e, "Could not start scan"),
+            })
+          }
           disabled={startScan.isPending}
         >
           New scan

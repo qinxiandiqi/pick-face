@@ -451,6 +451,47 @@ build` clean.
 | Tests | `tests/unit/test_service_photo.py`, `tests/unit/test_api_routes.py` |
 | Docs | `CHANGELOG.md`, `docs/03-architecture-design.md`, `docs/06-engineering-plan.md` |
 
+### M7.7 — `lib/toast.ts` facade over sonner (M7-T-11)
+
+One entry point for every user-facing toast in the SPA. Sonner is
+now an implementation detail of `lib/toast.ts`; no component may
+import from `"sonner"` directly.
+
+#### What's new
+
+- **`src/pick_face/web/app/src/lib/toast.ts`** — typed facade:
+  - `success(msg, opts?)`, `error(msg, opts?)`, `info(...)`,
+    `warning(...)` — direct passthroughs with sensible default
+    durations (success 4s, error 6s).
+  - `fromError(err, fallback?)` — accepts `unknown`, narrows:
+    - `ApiError` → title = `body.message`, description = `code:
+      <body.code>`, sticky on 5xx, dismissable on 4xx.
+    - `Error` → title = `err.message`.
+    - `unknown` → title = `fallback` (default `"Something went
+      went wrong"`).
+  - `toast` object form mirrors the sonner API for ergonomic swap-ins.
+- **`<ScanProgressBanner>` migrated** — dropped direct `import
+  { toast } from "sonner"`; uses `@/lib/toast` instead. The "New
+  scan" button now reports `useStartScanMutation` failures via
+  `toast.fromError(e, "Could not start scan")` (previously
+  swallowed silently).
+
+#### Tests added
+
+- 8 Vitest cases in `src/lib/toast.test.ts` covering `fromError`
+  narrowing for `ApiError` (4xx vs 5xx), `Error`, `string`, and
+  `undefined`, plus the `success`/`error` direct helpers.
+
+Regression: 396 pytest passing (unchanged), 45 Vitest passing (+8),
+`pnpm build` clean.
+
+#### Files touched
+
+| Category | Modified |
+|---|---|
+| Frontend | `src/pick_face/web/app/src/lib/toast.ts` (new), `src/pick_face/web/app/src/lib/toast.test.ts` (new), `src/pick_face/web/app/src/components/layout/ScanProgressBanner.tsx` |
+| Docs | `CHANGELOG.md`, `docs/03-architecture-design.md`, `docs/06-engineering-plan.md` |
+
 ---
 
 ## [2.1.0] - 2026-08-10 — High-precision tier (yunet-arcface)

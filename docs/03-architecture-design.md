@@ -494,7 +494,7 @@ src/pick_face/web/
 | `@use-gesture/react` | 拖动 + pinch + double-click |
 | `framer-motion` | 查看器过渡 |
 | `next-themes` | 主题（明 / 暗 / 跟随系统） |
-| `sonner` | Toast（M7.5 接入；当前用 `useState` 直接渲染） |
+| `sonner` | Toast（M7.7 接入：`lib/toast.ts` 门面收口所有调用方） |
 
 构建产物：Vite 输出到 `src/pick_face/web/static/`，FastAPI 用 `StaticFiles` mount 到 `/`。
 CI 工作流（`.github/workflows/ci.yml`）：`lint` → `frontend-build`（pnpm）→ `unit`（需要 web/static/ 存在）→ `frontend-test` → 三 OS smoke → bench → docs → AC-9。
