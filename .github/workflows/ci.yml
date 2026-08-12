@@ -40,10 +40,80 @@ jobs:
         run: uv run ruff format --check src tests
 
   # ---------------------------------------------------------------------------
+  # 1b. Frontend — Vite build → `src/pick_face/web/static/` so the wheel
+  #     built later contains the SPA bundle. Pnpm cache keyed on lockfile.
+  # ---------------------------------------------------------------------------
+  frontend-build:
+    name: Frontend (vite build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: src/pick_face/web/app/pnpm-lock.yaml
+
+      - working-directory: src/pick_face/web/app
+        run: pnpm install --frozen-lockfile
+
+      - working-directory: src/pick_face/web/app
+        run: pnpm build
+
+      - name: Verify vite emitted index.html
+        run: test -f src/pick_face/web/static/index.html
+
+      - name: AC-9 frontend guard (no *.onnx refs in SPA source)
+        run: |
+          ! find src/pick_face/web/app/src -iname '*.onnx' -print -quit | grep -q .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-static
+          path: src/pick_face/web/static
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 1c. Frontend tests — Vitest + Testing Library (jsdom).
+  #     Depends on `frontend-build` so `web/static/` exists when the test
+  #     artifact guard runs (test_vite_build_artifacts.py).
+  # ---------------------------------------------------------------------------
+  frontend-test:
+    name: Frontend (vitest)
+    needs: frontend-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: src/pick_face/web/app/pnpm-lock.yaml
+
+      - working-directory: src/pick_face/web/app
+        run: pnpm install --frozen-lockfile
+
+      - working-directory: src/pick_face/web/app
+        run: pnpm test
+
+  # ---------------------------------------------------------------------------
   # 2. Unit tests + acceptance (incl. AC-9 guard)
   # ---------------------------------------------------------------------------
   unit:
     name: Unit + acceptance tests
+    needs: frontend-build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -95,19 +165,19 @@ jobs:
       - name: Sync project
         run: uv sync --frozen
 
-      - name: Smoke: init-models refusal path
+      - name: 'Smoke: init-models refusal path'
         run: python tests/smoke_cli_init_models.py
 
-      - name: Smoke: scan
+      - name: 'Smoke: scan'
         run: python tests/smoke_cli_scan.py
 
-      - name: Smoke: index
+      - name: 'Smoke: index'
         run: python tests/smoke_cli_index.py
 
-      - name: Smoke: link
+      - name: 'Smoke: link'
         run: python tests/smoke_cli_link.py
 
-      - name: Smoke: report
+      - name: 'Smoke: report'
         run: python tests/smoke_cli_report.py
 
   smoke-windows:
@@ -129,23 +199,23 @@ jobs:
       - name: Sync project
         run: uv sync --frozen
 
-      - name: Smoke: init-models refusal path
+      - name: 'Smoke: init-models refusal path'
         shell: bash
         run: python tests/smoke_cli_init_models.py
 
-      - name: Smoke: scan
+      - name: 'Smoke: scan'
         shell: bash
         run: python tests/smoke_cli_scan.py
 
-      - name: Smoke: index
+      - name: 'Smoke: index'
         shell: bash
         run: python tests/smoke_cli_index.py
 
-      - name: Smoke: link
+      - name: 'Smoke: link'
         shell: bash
         run: python tests/smoke_cli_link.py
 
-      - name: Smoke: report
+      - name: 'Smoke: report'
         shell: bash
         run: python tests/smoke_cli_report.py
 
@@ -168,19 +238,19 @@ jobs:
       - name: Sync project
         run: uv sync --frozen
 
-      - name: Smoke: init-models refusal path
+      - name: 'Smoke: init-models refusal path'
         run: python tests/smoke_cli_init_models.py
 
-      - name: Smoke: scan
+      - name: 'Smoke: scan'
         run: python tests/smoke_cli_scan.py
 
-      - name: Smoke: index
+      - name: 'Smoke: index'
         run: python tests/smoke_cli_index.py
 
-      - name: Smoke: link
+      - name: 'Smoke: link'
         run: python tests/smoke_cli_link.py
 
-      - name: Smoke: report
+      - name: 'Smoke: report'
         run: python tests/smoke_cli_report.py
 
   # ---------------------------------------------------------------------------

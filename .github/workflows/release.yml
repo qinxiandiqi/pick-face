@@ -10,7 +10,7 @@ name: Release
 #   Repo:  pick-face
 #   Workflow: release.yml
 #
-# M4 / T-304.
+# M4 / T-304, M7 — vite build runs before uv build so the wheel ships the SPA bundle.
 
 on:
   push:
@@ -49,10 +49,27 @@ jobs:
       - name: Sync (no extras — verify base install)
         run: uv sync --frozen
 
+      # M7 — build the SPA into web/static/ before uv build so the wheel ships the bundle.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: src/pick_face/web/app/pnpm-lock.yaml
+
+      - working-directory: src/pick_face/web/app
+        run: pnpm install --frozen-lockfile
+
+      - working-directory: src/pick_face/web/app
+        run: pnpm build
+
       - name: Build sdist + wheel
         run: uv build
 
-      - name: AC-9: no *.onnx in artifacts
+      - name: 'AC-9: no *.onnx in artifacts'
         run: |
           .venv/Scripts/python -c "
           import zipfile, tarfile, sys, pathlib

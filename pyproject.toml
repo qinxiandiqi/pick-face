@@ -146,6 +146,13 @@ exclude = [
     "tests/*/__pycache__",
     # CI workflow is host-side, not user-side.
     ".github",
+    # M7 — sdist stays source-only. The SPA source is built by CI into
+    # web/static/ before `uv build`, so the wheel always carries the
+    # freshest bundle. Consumers of sdist have no Node toolchain.
+    "src/pick_face/web/app",
+    "src/pick_face/web/app/**",
+    "src/pick_face/web/static",
+    "src/pick_face/web/static/**",
 ]
 
 # ============================================================================
