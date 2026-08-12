@@ -159,3 +159,26 @@ export const PhotoMetaSchema = z.object({
   thumb_url: z.string(),
 });
 export type PhotoMeta = z.infer<typeof PhotoMetaSchema>;
+
+// M7.5 — extended photo metadata: photo row + every face (bbox + cluster_id).
+// Mirrors `pick_face.service.photo_service.PhotoMetadata`.
+export const FaceInPhotoSchema = z.object({
+  id: z.number().int(),
+  bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]).nullable(),
+  cluster_id: z.number().int().nullable(),
+  det_score: z.number().nullable(),
+  quality: z.number().nullable(),
+});
+export type FaceInPhoto = z.infer<typeof FaceInPhotoSchema>;
+
+export const PhotoMetadataSchema = z.object({
+  id: z.number().int(),
+  path: z.string(),
+  mtime: z.number(),
+  size: z.number().int(),
+  content_hash: z.string(),
+  natural_width: z.number().int().nullable(),
+  natural_height: z.number().int().nullable(),
+  faces: z.array(FaceInPhotoSchema),
+});
+export type PhotoMetadata = z.infer<typeof PhotoMetadataSchema>;

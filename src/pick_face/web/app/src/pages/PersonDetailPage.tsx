@@ -9,11 +9,12 @@ import * as React from "react";
 import { Suspense, lazy, useState } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import PhotoAlbum from "react-photo-album";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Info } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PhotoMetaSheet } from "@/components/persons/PhotoMetaSheet";
 import { usePersonQuery, usePersonPhotosQuery } from "@/lib/api/hooks";
 
 const FaceViewer = lazy(() =>
@@ -48,6 +49,19 @@ export function PersonDetailPage(): React.JSX.Element {
     : -1;
 
   const [viewerOpen, setViewerOpen] = useState(initialIndex >= 0);
+  // M7.5 — EXIF side-sheet. Lives alongside the viewer; the Info button
+  // in the header opens it for the currently-selected photo (defaults to
+  // the first photo if the viewer isn't open).
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetPhotoId, setSheetPhotoId] = useState<number | null>(null);
+
+  const openSheetForCurrent = React.useCallback(() => {
+    const target = photoId ?? roster[0]?.id ?? null;
+    if (target !== null) {
+      setSheetPhotoId(target);
+      setSheetOpen(true);
+    }
+  }, [photoId, roster]);
 
   const closeViewer = React.useCallback(() => {
     setViewerOpen(false);
@@ -98,6 +112,16 @@ export function PersonDetailPage(): React.JSX.Element {
             {person?.photo_count ?? 0} photos
           </p>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={openSheetForCurrent}
+          disabled={roster.length === 0}
+          data-testid="open-meta-sheet"
+        >
+          <Info className="mr-1 h-4 w-4" />
+          Photo details
+        </Button>
       </header>
 
       {photosLoading && (
@@ -140,6 +164,12 @@ export function PersonDetailPage(): React.JSX.Element {
           />
         </Suspense>
       )}
+
+      <PhotoMetaSheet
+        photoId={sheetPhotoId}
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+      />
     </div>
   );
 }

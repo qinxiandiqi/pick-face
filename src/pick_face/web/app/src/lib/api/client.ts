@@ -146,6 +146,14 @@ export const api = {
   // Photos
   getPhotoMeta: (id: number) =>
     request<import("@/lib/api/schemas").PhotoMeta>("GET", `/photos/${id}/meta`),
+  // M7.5 — extended metadata including face bbox + cluster_id.
+  // The /meta endpoint now returns the rich shape; kept the old name
+  // as an alias for the thumbnail page summary.
+  getPhotoMetadata: (id: number) =>
+    request<import("@/lib/api/schemas").PhotoMetadata>(
+      "GET",
+      `/photos/${id}/meta`,
+    ),
   getPhotoUrl: (id: number): string => buildUrl(`/photos/${id}`),
   getPhotoThumbUrl: (id: number): string => buildUrl(`/photos/${id}/thumb`),
 };

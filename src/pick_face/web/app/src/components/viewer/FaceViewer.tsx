@@ -2,7 +2,8 @@
 //
 // Responsibilities:
 //   - Render current photo (with CSS transform from store: scale + pan).
-//   - Render <FaceOverlay> (no-op for M7; M7.5 fills in bboxes).
+//   - Render <FaceOverlay> with face bboxes from /api/photos/{id}/meta
+//     (M7.5 — M7-T-6).
 //   - Wire gesture/keyboard/wheel via useViewerControls.
 //   - Toggle fullscreen on the viewer container.
 //   - Pre-load next + prev images so ← / → feel instant.
@@ -11,10 +12,11 @@ import * as React from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { FaceOverlay } from "@/components/viewer/FaceOverlay";
+import { FaceOverlay, type Bbox } from "@/components/viewer/FaceOverlay";
 import { ViewerToolbar } from "@/components/viewer/ViewerToolbar";
 import { useViewerControls } from "@/components/viewer/useViewerControls";
 import { useViewerStore, type ViewerPhoto } from "@/lib/viewerStore";
+import { usePhotoMetadataQuery } from "@/lib/api/hooks";
 import { cn } from "@/lib/cn";
 
 export interface FaceViewerProps {
@@ -53,6 +55,38 @@ export function FaceViewer({
 
   const current = storePhotos[index];
 
+  // M7.5 — fetch extended metadata (bbox + cluster_id) for the current photo.
+  // The endpoint returns natural dimensions; we MUST favour the server's
+  // values when available (the on-load handler that uses <img>.naturalWidth
+  // is a fallback for cases where the dims are missing — e.g. corrupt JPEG).
+  const { data: photoMeta } = usePhotoMetadataQuery(open ? current?.id ?? null : null);
+
+  // Track natural image size — prefer the server-reported dimensions
+  // (PIL opened the file reliably), fall back to <img>.naturalWidth.
+  useEffect(() => {
+    if (!current) return;
+    if (photoMeta?.natural_width && photoMeta?.natural_height) {
+      setNatural({ w: photoMeta.natural_width, h: photoMeta.natural_height });
+      return;
+    }
+    const img = new Image();
+    img.onload = () => setNatural({ w: img.naturalWidth, h: img.naturalHeight });
+    img.src = current.url;
+  }, [current?.url, current?.id, photoMeta?.natural_width, photoMeta?.natural_height]);
+
+  // Build bbox list for the overlay. Server returns [x1, y1, x2, y2];
+  // overlay wants {x, y, w, h} plus clusterId for the highlight filter.
+  const boxes: Bbox[] = React.useMemo(
+    () =>
+      (photoMeta?.faces ?? [])
+        .filter((f) => f.bbox !== null)
+        .map((f) => {
+          const [x1, y1, x2, y2] = f.bbox as [number, number, number, number];
+          return { x: x1, y: y1, w: x2 - x1, h: y2 - y1, clusterId: f.cluster_id };
+        }),
+    [photoMeta],
+  );
+
   // Track container size (resized on fullscreen toggle).
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -64,14 +98,6 @@ export function FaceViewer({
     setViewport({ w: el.clientWidth, h: el.clientHeight });
     return () => ro.disconnect();
   }, [open]);
-
-  // Track natural image size.
-  useEffect(() => {
-    if (!current) return;
-    const img = new Image();
-    img.onload = () => setNatural({ w: img.naturalWidth, h: img.naturalHeight });
-    img.src = current.url;
-  }, [current?.url]);
 
   // Hook gestures + keyboard + wheel.
   const { onWheel: handleWheel } = useViewerControls({
@@ -144,7 +170,14 @@ export function FaceViewer({
               }}
             />
           )}
-          <FaceOverlay naturalW={natural.w} naturalH={natural.h} boxes={[]} />
+          {current && (
+            <FaceOverlay
+              naturalW={natural.w}
+              naturalH={natural.h}
+              boxes={boxes}
+              highlightClusterId={personId}
+            />
+          )}
           <ViewerToolbar />
 
           {/* Preload neighbors */}

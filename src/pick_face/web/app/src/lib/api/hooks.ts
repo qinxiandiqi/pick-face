@@ -17,6 +17,7 @@ import type {
   PersonDetail,
   PersonPhoto,
   PhotoMeta,
+  PhotoMetadata,
   ReadyResponse,
   ScanJob,
   WhitelistedPath,
@@ -144,6 +145,18 @@ export function usePhotoMetaQuery(id: number | null): UseQueryResult<PhotoMeta> 
   return useQuery({
     queryKey: ["photo-meta", id],
     queryFn: () => api.getPhotoMeta(id!),
+    enabled: id !== null,
+  });
+}
+
+// M7.5 — extended metadata (path + faces + bbox + cluster_id). Used by
+// FaceViewer to draw the SVG overlay and by the EXIF side-sheet.
+export function usePhotoMetadataQuery(
+  id: number | null,
+): UseQueryResult<PhotoMetadata> {
+  return useQuery({
+    queryKey: ["photo-metadata", id],
+    queryFn: () => api.getPhotoMetadata(id!),
     enabled: id !== null,
   });
 }
