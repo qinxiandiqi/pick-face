@@ -171,6 +171,23 @@ export const FaceInPhotoSchema = z.object({
 });
 export type FaceInPhoto = z.infer<typeof FaceInPhotoSchema>;
 
+// EXIF block surfaced by /api/photos/{id}/meta (M7.6 — fills the side-sheet).
+// Mirrors `pick_face.service.photo_service.ExifRecord`. Every field is
+// optional — stripped JPEGs / PNGs return all-null.
+export const ExifSchema = z.object({
+  make: z.string().nullable(),
+  model: z.string().nullable(),
+  taken_at: z.number().nullable(),        // epoch seconds (UTC)
+  lens: z.string().nullable(),
+  exposure: z.number().nullable(),        // seconds
+  f_number: z.number().nullable(),
+  iso: z.number().int().nullable(),
+  focal_length: z.number().nullable(),    // mm
+  gps_lat: z.number().nullable(),         // signed decimal degrees
+  gps_lon: z.number().nullable(),
+});
+export type Exif = z.infer<typeof ExifSchema>;
+
 export const PhotoMetadataSchema = z.object({
   id: z.number().int(),
   path: z.string(),
@@ -180,5 +197,6 @@ export const PhotoMetadataSchema = z.object({
   natural_width: z.number().int().nullable(),
   natural_height: z.number().int().nullable(),
   faces: z.array(FaceInPhotoSchema),
+  exif: ExifSchema,
 });
 export type PhotoMetadata = z.infer<typeof PhotoMetadataSchema>;

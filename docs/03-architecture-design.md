@@ -181,7 +181,7 @@ DELETE /api/persons/{id}                           # 软删除（mark deleted）
 ```
 GET  /api/photos/{id}                     # 流式原图（支持 HTTP Range，不复制）   ✅ M6
 GET  /api/photos/{id}/thumb                # 缩略图（JPEG 256×256）                  ✅ M6
-GET  /api/photos/{id}/meta                 # 路径 + mtime + size + 自然尺寸 + 人脸列表（bbox + cluster_id + det_score + quality）✅ M7.5
+GET  /api/photos/{id}/meta                 # 路径 + mtime + size + 自然尺寸 + 人脸列表（bbox + cluster_id + det_score + quality）+ EXIF（make/model/taken_at/lens/exposure/f_number/iso/focal_length/gps）✅ M7.6
 GET  /api/photos/{id}/thumbnail            # 同 /thumb（保留别名）                          ⏳ M7
 GET  /api/photos/{id}/metadata            # EXIF + bbox + faces 完整列表                    ⏳ M7
 GET  /api/photos/{id}/faces               # 该图所有人脸（bbox + 哪个 person）              ⏳ M7
@@ -428,7 +428,8 @@ pick-face-web serve --host 0.0.0.0 --port 8000
 ## 7. 前端架构（SPA）
 
 > **M7 状态**：✅ SPA 骨架 + 四个核心路由 + FaceViewer（键盘/滚轮/拖动/全屏/手势）+ SSE 进度条。
-> **M7.5 状态**：✅ `<FaceOverlay>` bbox 渲染（按 cluster_id 高亮当前人）+ EXIF 侧抽屉（路径/尺寸/人脸列表；EXIF 字段待后端）。PWA / 全局搜索 / Sonner 封装 / NC-research Badge 仍推迟到 M7.5 余下项。
+> **M7.5 状态**：✅ `<FaceOverlay>` bbox 渲染（按 cluster_id 高亮当前人）+ EXIF 侧抽屉（路径/尺寸/人脸列表；EXIF 字段待后端）。
+> **M7.6 状态**：✅ 真实 EXIF — 服务层 `pick_face.service.photo_service.get_exif()` 用 PIL `Image.getexif()` 读 make/model/taken_at/lens/exposure/f_number/iso/focal_length/GPS；`/api/photos/{id}/meta` 响应多出 `exif` 块；`<PhotoMetaSheet>` 抽屉的 EXIF 段从占位切换到真实字段（相机 / 拍摄时间 / 曝光三段 / GPS DMS）。PWA / 全局搜索 / Sonner 封装 / NC-research Badge 仍推迟到 M7.5 余下项。
 
 ```
 src/pick_face/web/

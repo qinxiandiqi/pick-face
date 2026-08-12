@@ -47,6 +47,18 @@ const SAMPLE: PhotoMetadata = {
       quality: 0.55,
     },
   ],
+  exif: {
+    make: "Canon",
+    model: "EOS R6",
+    taken_at: 1_718_460_600, // 2024-06-15 14:30:00 UTC
+    lens: "RF 50mm F1.2 L USM",
+    exposure: 1 / 200,
+    f_number: 2.8,
+    iso: 400,
+    focal_length: 50,
+    gps_lat: 37.5,
+    gps_lon: -122.0833,
+  },
 };
 
 function withQueryClient(children: React.ReactNode): React.JSX.Element {
@@ -108,10 +120,13 @@ describe("PhotoMetaSheet", () => {
     // bbox values rendered with one decimal place
     expect(screen.getByText(/\[120\.0, 80\.0, 480\.0, 600\.0\]/)).toBeInTheDocument();
 
-    // EXIF placeholder section is present
-    expect(
-      screen.getByText(/isn't surfaced yet/i),
-    ).toBeInTheDocument();
+    // EXIF section renders camera / exposure / GPS data.
+    expect(screen.getByText("Canon EOS R6")).toBeInTheDocument();
+    expect(screen.getByText("RF 50mm F1.2 L USM")).toBeInTheDocument();
+    // Exposure line collapses the four exposure fields into "1/200s • f/2.8 • ISO 400 • 50mm".
+    expect(screen.getByText(/1\/200s • f\/2\.8 • ISO 400 • 50mm/)).toBeInTheDocument();
+    // GPS formatted as DMS.
+    expect(screen.getByText(/37°30'0\.0"N/)).toBeInTheDocument();
   });
 
   it("renders an empty-faces placeholder when there are no faces", () => {
@@ -179,5 +194,60 @@ describe("PhotoMetaSheet", () => {
     expect(visibleCloseButton).toBeDefined();
     visibleCloseButton!.click();
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("renders a no-EXIF placeholder when all exif fields are null", () => {
+    metaMock.mockReturnValue({
+      data: { ...SAMPLE, exif: {
+        make: null, model: null, taken_at: null, lens: null,
+        exposure: null, f_number: null, iso: null, focal_length: null,
+        gps_lat: null, gps_lon: null,
+      } },
+      isLoading: false,
+      isError: false,
+    });
+    render(
+      withQueryClient(
+        <PhotoMetaSheet photoId={42} open={true} onOpenChange={vi.fn()} />,
+      ),
+    );
+    expect(screen.getByText(/no exif tags on this photo/i)).toBeInTheDocument();
+  });
+
+  it("renders only the Taken row when the photo has no camera/exposure/GPS", () => {
+    metaMock.mockReturnValue({
+      data: { ...SAMPLE, exif: {
+        make: null, model: null, taken_at: 1_718_460_600, lens: null,
+        exposure: null, f_number: null, iso: null, focal_length: null,
+        gps_lat: null, gps_lon: null,
+      } },
+      isLoading: false,
+      isError: false,
+    });
+    render(
+      withQueryClient(
+        <PhotoMetaSheet photoId={42} open={true} onOpenChange={vi.fn()} />,
+      ),
+    );
+    // No Camera / Exposure / GPS rows.
+    expect(screen.queryByText(/Canon|EOS R6/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/1\/200s/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/°/)).not.toBeInTheDocument();
+    // But the Taken row IS present.
+    expect(screen.getByText(/taken/i)).toBeInTheDocument();
+  });
+
+  it("formats 1s+ exposures with one decimal instead of 1/x style", () => {
+    metaMock.mockReturnValue({
+      data: { ...SAMPLE, exif: { ...SAMPLE.exif, exposure: 2.5 } },
+      isLoading: false,
+      isError: false,
+    });
+    render(
+      withQueryClient(
+        <PhotoMetaSheet photoId={42} open={true} onOpenChange={vi.fn()} />,
+      ),
+    );
+    expect(screen.getByText(/2\.5s • f\/2\.8 • ISO 400 • 50mm/)).toBeInTheDocument();
   });
 });

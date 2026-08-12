@@ -24,6 +24,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { usePhotoMetadataQuery } from "@/lib/api/hooks";
+import type { Exif } from "@/lib/api/schemas";
 
 export interface PhotoMetaSheetProps {
   photoId: number | null;
@@ -134,10 +135,48 @@ export function PhotoMetaSheet({
 
             <section>
               <SectionHeader icon={MapPin}>EXIF</SectionHeader>
-              <p className="text-sm text-muted-foreground">
-                Camera / GPS / exposure data isn't surfaced yet — backend
-                extension lands in a follow-up PR.
-              </p>
+              {hasAnyExif(data.exif) ? (
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
+                  {(data.exif.make || data.exif.model || data.exif.lens) && (
+                    <>
+                      <dt className="text-muted-foreground">Camera</dt>
+                      <dd>
+                        {[data.exif.make, data.exif.model].filter(Boolean).join(" ") || "—"}
+                        {data.exif.lens ? (
+                          <span className="block text-xs text-muted-foreground">
+                            {data.exif.lens}
+                          </span>
+                        ) : null}
+                      </dd>
+                    </>
+                  )}
+                  {data.exif.taken_at !== null && (
+                    <>
+                      <dt className="text-muted-foreground">Taken</dt>
+                      <dd>{formatTakenAt(data.exif.taken_at)}</dd>
+                    </>
+                  )}
+                  {hasExposure(data.exif) && (
+                    <>
+                      <dt className="text-muted-foreground">Exposure</dt>
+                      <dd>{formatExposure(data.exif)}</dd>
+                    </>
+                  )}
+                  {data.exif.gps_lat !== null && data.exif.gps_lon !== null && (
+                    <>
+                      <dt className="text-muted-foreground">GPS</dt>
+                      <dd className="font-mono text-xs">
+                        {formatGps(data.exif.gps_lat, data.exif.gps_lon)}
+                      </dd>
+                    </>
+                  )}
+                </dl>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No EXIF tags on this photo (PNG, stripped JPEG, or
+                  missing metadata).
+                </p>
+              )}
             </section>
           </div>
         )}
@@ -182,4 +221,63 @@ function formatMtime(epoch: number): string {
   } catch {
     return String(epoch);
   }
+}
+
+function hasAnyExif(exif: Exif): boolean {
+  return (
+    exif.make !== null ||
+    exif.model !== null ||
+    exif.taken_at !== null ||
+    exif.lens !== null ||
+    exif.exposure !== null ||
+    exif.f_number !== null ||
+    exif.iso !== null ||
+    exif.focal_length !== null ||
+    exif.gps_lat !== null ||
+    exif.gps_lon !== null
+  );
+}
+
+function hasExposure(exif: Exif): boolean {
+  return (
+    exif.exposure !== null || exif.f_number !== null || exif.iso !== null || exif.focal_length !== null
+  );
+}
+
+function formatTakenAt(epoch: number): string {
+  try {
+    return new Date(epoch * 1000).toLocaleString();
+  } catch {
+    return String(epoch);
+  }
+}
+
+/** Render exposure as "1/200s • f/2.8 • ISO 400 • 50mm". Missing parts are dropped. */
+function formatExposure(exif: Exif): string {
+  const parts: string[] = [];
+  if (exif.exposure !== null) {
+    if (exif.exposure >= 1) {
+      parts.push(`${exif.exposure.toFixed(1)}s`);
+    } else if (exif.exposure > 0) {
+      // 1/200s style
+      const denom = Math.round(1 / exif.exposure);
+      parts.push(`1/${denom}s`);
+    }
+  }
+  if (exif.f_number !== null) parts.push(`f/${exif.f_number.toFixed(1)}`);
+  if (exif.iso !== null) parts.push(`ISO ${exif.iso}`);
+  if (exif.focal_length !== null) parts.push(`${Math.round(exif.focal_length)}mm`);
+  return parts.join(" • ");
+}
+
+function formatGps(lat: number, lon: number): string {
+  const fmt = (v: number, positive: string, negative: string) => {
+    const abs = Math.abs(v);
+    const deg = Math.floor(abs);
+    const minFloat = (abs - deg) * 60;
+    const min = Math.floor(minFloat);
+    const sec = (minFloat - min) * 60;
+    return `${deg}°${min}'${sec.toFixed(1)}"${v >= 0 ? positive : negative}`;
+  };
+  return `${fmt(lat, "N", "S")} ${fmt(lon, "E", "W")}`;
 }

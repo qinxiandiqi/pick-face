@@ -405,6 +405,52 @@ build` clean (1757 modules, 499 KB JS / 22 KB CSS).
 | Tests | — | `tests/unit/test_api_routes.py`, `tests/unit/test_service_photo.py` |
 | Docs | — | `CHANGELOG.md`, `docs/03-architecture-design.md`, `docs/06-engineering-plan.md` |
 
+### M7.6 — Real EXIF in `/api/photos/{id}/meta` + side-sheet
+
+Fills the EXIF placeholder in the `<PhotoMetaSheet>` drawer (M7-T-8).
+Unblocks the future cmdk global search (M7-T-12) — EXIF fields will
+join the search index.
+
+#### What's new
+
+- **`pick_face.service.photo_service.get_exif(photo_id) → ExifRecord`**
+  — reads `Image.getexif()` via PIL, parses rationals (`ExposureTime`
+  `(1,200)` → `0.005s`), DMS triples (`(37,30,0)` + `"N"` → `37.5`),
+  and `DateTimeOriginal` `"YYYY:MM:DD HH:MM:SS"` → epoch seconds
+  (UTC). Strips trailing NULs from `Make`/`Model`. Returns all-`None`
+  for stripped JPEGs / PNGs / corrupt files / missing source.
+- **`/api/photos/{id}/meta` extended** — adds an `exif` block
+  alongside `faces`. Mirrored in zod `ExifSchema` /
+  `PhotoMetadataSchema`.
+- **`<PhotoMetaSheet>` EXIF section** — replaces the placeholder with
+  real rows: Camera (make + model + lens), Taken (locale string),
+  Exposure (`1/200s • f/2.8 • ISO 400 • 50mm`), GPS (DMS, signed
+  hemisphere). Missing fields are silently dropped; a fully-empty
+  EXIF block renders the "No EXIF tags on this photo" placeholder.
+
+#### Tests added
+
+- 6 pytest cases in `tests/unit/test_service_photo.py` for `get_exif`
+  (full payload, no tags, partial tags, missing file, 404,
+  trailing-NUL stripping).
+- 2 pytest cases in `tests/unit/test_api_routes.py` for the new
+  `exif` block in `/meta` (full payload + all-null fallback).
+- 3 Vitest cases in `PhotoMetaSheet.test.tsx` (all-null placeholder,
+  taken-only row, 1s+ exposure formatting). Existing success test
+  extended to assert the camera / exposure / GPS rows.
+
+Regression: 396 pytest passing (+8), 37 Vitest passing (+3), `pnpm
+build` clean.
+
+#### Files touched
+
+| Category | Modified |
+|---|---|
+| Backend | `src/pick_face/service/photo_service.py`, `src/pick_face/api/photos.py` |
+| Frontend | `src/pick_face/web/app/src/lib/api/schemas.ts`, `src/pick_face/web/app/src/components/persons/PhotoMetaSheet.tsx`, `src/pick_face/web/app/src/components/persons/PhotoMetaSheet.test.tsx` |
+| Tests | `tests/unit/test_service_photo.py`, `tests/unit/test_api_routes.py` |
+| Docs | `CHANGELOG.md`, `docs/03-architecture-design.md`, `docs/06-engineering-plan.md` |
+
 ---
 
 ## [2.1.0] - 2026-08-10 — High-precision tier (yunet-arcface)

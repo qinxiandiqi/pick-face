@@ -68,7 +68,7 @@ v2.x（M0–M5）已经把"CLI 工具 + 算法内核 + Model Pack 架构"做完�
 | M7-T-4 | `<FaceViewer>` 全屏切换（F / Esc） ✅ M7 | M7-T-2 |
 | M7-T-5 | `@use-gesture/react` 触摸手势（pinch、swipe、tap） ✅ M7 | M7-T-2 |
 | M7-T-6 | `<FaceOverlay>` 在图上画 bbox ✅ M7.5（服务端 bbox + 客户端 SVG overlay + highlightClusterId 过滤） | M7-T-1 |
-| M7-T-7 | `api/photos/{id}/metadata` bbox + faces + 自然尺寸 ✅ M7.5（EXIF 仍推迟） | — |
+| M7-T-7 | `api/photos/{id}/metadata` bbox + faces + 自然尺寸 + EXIF ✅ M7.6 | — |
 | M7-T-8 | 信息层抽屉（路径/尺寸/人脸/EXIF 占位） ✅ M7.5（EXIF 占位等后端） | M7-T-7 |
 | M7-T-9 | PWA manifest + service worker ⏸️ M7.5 | M7-T-1 |
 | M7-T-10 | 浏览器 E2E 测试（Playwright）⏸️ M7.5 | M7-T-1 |
