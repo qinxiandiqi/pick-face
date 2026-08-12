@@ -111,6 +111,10 @@ pick-face-web init-models --quant fp32 --allow-network   # ~261 MB, x86 + GPU
 pick-face run --src /mnt/photos -o /tmp/by_face/
 ```
 
+See [docs/12-compatibility-promise.md](docs/12-compatibility-promise.md) for
+the full v2.x → v3.x compatibility contract: which commands still work,
+which moved, and which were retired.
+
 ---
 
 ## What you get

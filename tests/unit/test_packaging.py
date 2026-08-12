@@ -28,6 +28,7 @@ REPO = Path(__file__).resolve().parent.parent.parent
 EXPECTED_MODULES = {
     # top level
     "cli",
+    "web_cli",
     # core
     "core/config",
     "core/errors",
@@ -57,6 +58,25 @@ EXPECTED_MODULES = {
     "platform/pack",
     "platform/packs/yunet_sface",
     "platform/packs/yunet_arcface",
+    # service (v3 web layer)
+    "service/paths",
+    "service/config_service",
+    "service/scan_service",
+    "service/person_service",
+    "service/photo_service",
+    # api (v3 web layer)
+    "api/app",
+    "api/config",
+    "api/deps",
+    "api/health",
+    "api/persons",
+    "api/photos",
+    "api/scan",
+    # worker (v3 web layer)
+    "worker/scan_worker",
+    "worker/runner",
+    # web static placeholder is intentionally not in the module set
+    # (it ships as a data file under web/static/, not as .py code)
 }
 
 
@@ -158,6 +178,7 @@ def test_wheel_entry_point(built_artifacts) -> None:
     with zipfile.ZipFile(whl) as z:
         ep = z.read(f"{prefix}/entry_points.txt").decode("utf-8")
     assert "pick-face = pick_face.cli:main" in ep
+    assert "pick-face-web = pick_face.web_cli:main" in ep
 
 
 def test_wheel_license_present(built_artifacts) -> None:
@@ -183,6 +204,9 @@ def test_installed_package_metadata_is_consistent() -> None:
     pf = [e for e in eps if e.name == "pick-face"]
     assert pf, "pick-face console script missing"
     assert pf[0].value == "pick_face.cli:main"
+    pfw = [e for e in eps if e.name == "pick-face-web"]
+    assert pfw, "pick-face-web console script missing"
+    assert pfw[0].value == "pick_face.web_cli:main"
 
 
 def test_wheel_is_python_3_pure(built_artifacts) -> None:
