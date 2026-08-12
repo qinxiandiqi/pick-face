@@ -7,11 +7,6 @@
 This document applies starting with **`pick-face 1.0.0`** and follows
 [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
-> **v3.0 note**: pick-face v3.0 introduces the **Web service** surface
-> alongside the existing CLI. CLI commands (`pick-face run`,
-> `pick-face init`, etc.) remain supported as documented in §1.1; the new
-> `pick-face-web` subcommand set is documented in §1.2.
-
 ---
 
 ## 1. What we promise

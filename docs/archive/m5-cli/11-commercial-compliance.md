@@ -1,7 +1,7 @@
 # 11 商业部署合规指南
 
-> 文档版本：v3.0 · 2026-08-12
-> 范围：把"默认 `yunet-sface` MIT / `yunet-arcface` Apache-2.0 + MIT，opt-in `buffalo_l` NC-research"这一结构在产品、代码、文档、发布四个层面**完整闭环**。
+> 文档版本：v0.2（路线 B 落地稿） · 2026-08-07
+> 范围：把"默认 `yunet-mfn` Apache-2.0，opt-in `buffalo_l` NC-research"这一新结构在产品、代码、文档、发布四个层面**完整闭环**。
 > **本文是单一权威解读**。任何与本文件冲突的章节（README / 01 / 02 / 10 / 03 §11 / 04 / 06 / 08 / 09），以本文件为准。
 > 关联：[08 §6 最终方案](08-review-notes.md) · [10 §0 / §5 model pack 与许可](10-model-stack.md) · [01 R-COM-1](01-product-requirement.md) · [03 §11 包管理](03-architecture-design.md) · [06 §7.2 extras](06-engineering-plan.md) · [07 ADR-005/007](07-risk-and-decisions.md) · [13 §8 Pi 路径 AC-9 自然消失](13-raspberry-pi-support.md) · [14-model-pack-plugins.md](14-model-pack-plugins.md)
 

@@ -8,6 +8,11 @@ per-command `--help`. Reference docs: [docs/05 §4](05-data-and-storage.md)
 If you hit something not covered here, open an issue with the output of
 `pick-face --version`, your OS, and the relevant section of `report.md`.
 
+> **v3.0 note**: pick-face is now a **Web service**. Most CLI-era
+> troubleshooting (symlink fallback, hard-link chains, etc.) still applies
+> to v2.x mode but is rarely hit in v3. New v3-specific failures are at
+> the top of each section, marked **v3**.
+
 ---
 
 ## 1. Link fallback warnings on Windows

@@ -9,6 +9,161 @@ the full policy.
 
 ---
 
+## [3.0.0] - 2026-08-12 — **Product pivot**: Web gallery service
+
+**Major product pivot.** pick-face transitions from a CLI tool
+(`pick-face run --src ... -o ...`) to a **self-hosted Web service**
+(`pick-face-web serve`). New product is a face-clustered photo gallery
+that you open in a browser.
+
+> **CLI still works.** All v2.x commands (`pick-face run`,
+> `pick-face init`, `pick-face init-models`, `pick-face doctor`)
+> remain available and produce the same `by_face/person_NNNN/...`
+> directory layout. The new `pick-face-web` subcommand is added
+> alongside, not instead.
+
+### What you get
+
+A FastAPI app + React SPA:
+
+- **Configure scan paths** in the Web UI (`/settings`) — added paths
+  go through a whitelist (`Path.resolve()` + allowed-roots check).
+- **Background scan** with progress streamed to the browser via
+  Server-Sent Events.
+- **`/persons`** — face-clustered virtual albums (one per detected
+  identity, sorted by representative photo + face count).
+- **`/persons/{id}`** — waterfall view of every photo where this
+  person appears.
+- **`/persons/{id}/photos/{photoId}`** — full-screen viewer with
+  `← / → / Space` keys, double-click to zoom, drag-pan, pinch/swipe
+  on touch, `F` for fullscreen, `Esc` to exit.
+- **Incremental updates** via `watchdog` — new photos added to a
+  scan path appear in the gallery within seconds.
+- **Multi-source aggregation** — multiple directories become one album.
+- **Originals are never copied** — the viewer streams via HTTP Range.
+  Only thumbnails land in `~/.local/share/pick-face/thumbnails/`.
+
+### New architecture
+
+- New `src/pick_face/service/` sub-package (config / scan / person / photo
+  services, file watcher).
+- New `src/pick_face/api/` sub-package (FastAPI routers under `/api/*`).
+- New `src/pick_face/worker/` sub-package (scan worker, index worker,
+  cluster worker).
+- New `src/pick_face/web/` — built SPA (**React + Vite + TypeScript + shadcn/ui + Tailwind CSS**, see ADR-014).
+- Algorithm core (`ingest/`, `store/`, `output/`, `platform/`) is reused
+  100%; only the call sites moved from CLI → FastAPI `app.on_event("startup")`.
+- Data layout changed: SQLite + HNSW + thumbnails now live under
+  `~/.local/share/pick-face/` instead of `<scan-root>/.pick-face/`.
+  A migration tool (`pick-face-web migrate`) reads old `by_face/` and
+  populates the new database.
+
+### Documentation
+
+All docs rewritten for the Web service:
+
+- `docs/01-product-requirement.md` — Web service PRD, AC-W1..W9
+- `docs/02-technical-pre-research.md` — stack rationale
+- `docs/03-architecture-design.md` — FastAPI app + worker + SPA
+- `docs/04-algorithm-pipeline.md` — long-lived sessions + watchdog
+- `docs/05-data-and-storage.md` — SQLite schema + thumbnail layout
+- `docs/06-engineering-plan.md` — M6+ milestones
+- `docs/07-risk-and-decisions.md` — ADRs
+- `docs/09-face-recognition-pipeline.md` — end-to-end walkthrough
+- `docs/11-`, `docs/12-`, `docs/13-`, `docs/14-` — refreshed front-matter;
+  algorithm/model/policy content unchanged
+- `docs/troubleshooting.md` — appended v3-specific entries
+- `docs/ARCHIVE-NOTES.md` — pointer to the v2.x CLI archive
+
+### Migration from v2.x
+
+```bash
+# Install v3 (preserves v2.x CLI)
+uv pip install -U "pick-face[web]"
+
+# Migrate v2.x by_face/ into v3 database
+pick-face-web migrate /path/to/v2-output
+
+# Launch the web service
+pick-face-web serve
+```
+
+### Notes
+
+- `yunet-sface` (default MIT) and `yunet-arcface` (high-precision
+  Apache-2.0+MIT) packs unchanged — the model layer is product-shape
+  agnostic.
+- AC-9 commercial-compliance gate still only fires for NC-research packs
+  (`buffalo_l` / `buffalo_sc` / `antelopev2`).
+- The `web` extra in `pyproject.toml` adds `fastapi`, `uvicorn[standard]`,
+  `watchdog`, `apscheduler`. Existing `heic`, `raw`, `gpu` extras
+  unchanged.
+- Frontend stack locked at M6 kickoff (ADR-014): **shadcn/ui**
+  (Radix + Tailwind, copy-source) + **react-photo-album** + **@use-gesture/react**
+  + **framer-motion** + **TanStack Query** + **zustand** + **react-hook-form** +
+  **zod** + **lucide-react** + **sonner**. shadcn/ui components are
+  generated into `src/web/components/ui/`; new components added via
+  `pnpm dlx shadcn@latest add <component>`.
+
+### v3.0.0 app-dir contract (NEW)
+
+All pick-face persistent state lives under **one application root** —
+no XDG split, no "hidden folder inside the user's photo tree":
+
+```
+~/.pick-face/                              # = PICK_FACE_HOME default
+├── config/                                # XDG_CONFIG equivalent: config.toml
+├── data/                                  # XDG_DATA equivalent: backup this = backup the album
+│   ├── index.sqlite
+│   ├── index.hnsw
+│   ├── chips/                              # 112×112 face crops
+│   ├── thumbnails/                         # 256×256 photo thumbs
+│   ├── covers/                             # per-person cover files
+│   ├── jobs/                               # scan task state
+│   └── logs/
+└── cache/                                  # XDG_CACHE equivalent: redownloadable
+    ├── models/                             # ONNX weights (SHA256-pinned)
+    └── tmp/
+```
+
+**Path resolution priority** (high → low):
+1. `PICK_FACE_HOME` environment variable (Docker / multi-instance / debugging)
+2. `[server] data_dir` in `~/.pick-face/config/config.toml`
+3. Default `~/.pick-face/` (= `Path.home() / ".pick-face"`)
+
+**Uninstall**: `rm -rf ~/.pick-face` — no residue.
+
+**Docker**:
+```bash
+docker run -d -p 8000:8000 \
+  -v /mnt/photos:/photos:ro \
+  -v ~/.pick-face:/data \
+  -e PICK_FACE_HOME=/data \
+  pick-face/web:latest
+```
+
+| Sub-dir | Role | Backup? |
+|---|---|---|
+| `config/config.toml` | TOML configuration | **必备份** |
+| `data/index.sqlite` + `data/index.hnsw` | 主数据库 + 向量索引 | **必备份** |
+| `data/chips/<face_id>.jpg` | 人脸 chip（112×112 对齐后） | **必备份**（虚拟相册封面数据源） |
+| `data/covers/person_<id>.jpg` | 虚拟相册封面（chip 的硬链接 / 缓存） | 备份（可重新生成） |
+| `data/thumbnails/<hash>.jpg` | 原图 256×256 缩略图 | 备份（可重新生成） |
+| `data/jobs/scan-<uuid>.json` | 扫描任务状态 | 可选 |
+| `data/logs/pick-face.log` | 应用日志 | 否 |
+| `cache/models/<pack>/` | 模型权重 | 否（SHA256 pin，可重下） |
+
+### v3.0.0 virtual-album cover (NEW)
+
+`/api/persons/{id}/cover` returns the person's **face chip** (112×112
+aligned) — not a photo thumbnail. Data source: `persons.thumbnail_face_id`
+→ `faces.chip_path`. Selection: highest `cluster_confidence`, then highest
+`det_score`, then largest `bbox_w * bbox_h` (clearest). This way the
+`/persons` grid tells the user "who is who" at a glance, even when the
+underlying photos contain side profiles or closed eyes.
+
+---
+
 ## [2.1.0] - 2026-08-10 — High-precision tier (yunet-arcface)
 
 Adds a second bundled model pack (`yunet-arcface`) alongside the

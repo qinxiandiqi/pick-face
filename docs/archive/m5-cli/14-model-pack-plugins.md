@@ -1,10 +1,8 @@
 # 14 Model Pack 插件契约
 
-> 文档版本：v3.0 · 2026-08-12
-> 范围：定义 **第三方 / 内部** model pack 插件如何接入 pick-face（包括 v3 Web 服务 + v2.x CLI），插件作者**应该**遵守什么、**不应该**触碰什么。
+> 文档版本：v0.2（路线 B 落地稿） · 2026-08-07
+> 范围：定义 **第三方 / 内部** model pack 插件如何接入 pick-face，插件作者**应该**遵守什么、**不应该**触碰什么。
 > **本文是单一权威解读**。任何与本文件冲突的章节（README / 03 / 10 / 13），以本文件为准。
-
-> **v3 note**：v3 Web 服务复用 v2.x 的 Model Pack 架构 100%。`build_detector` / `build_embedder` / `build_aligner` 在 FastAPI `app.on_event("startup")` 阶段被调用一次，session 复用。`providers=` 关键字在 v3 真正用于路由 CUDA / DirectML EP（v2.x CLI 也已支持）。
 > 关联：[10-model-stack.md](10-model-stack.md) · [13-raspberry-pi-support.md](13-raspberry-pi-support.md)
 
 ## 0. 摘要（60 秒版）

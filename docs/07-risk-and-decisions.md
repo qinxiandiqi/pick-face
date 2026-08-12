@@ -1,95 +1,183 @@
-# 07 风险登记与技术决策记录（ADR）
+# 07 风险与决策（v3.0）
 
-> 文档版本：v0.1（预研稿） · 2026-07-30
+> 文档版本：v3.0 · 2026-08-12
+> 范围：v3 Web 相册服务的关键风险、未决议题、ADR 索引
 
-## 1. 风险登记
+## 0. 当前决策日志
 
-| ID | 风险 | 等级 | 触发条件 | 缓解 | 负责人 | 状态 |
-|----|------|------|----------|------|--------|------|
-| R-01 | 跨年龄/化妆/口罩导致漏识 | 高 | v0.1 验收 < 80% 一致 | 保留人工校正；提供 `merge/split`；持续调参 | 算法 | 监控 |
-| R-02 | Windows 软链接权限 | 中 | 普通用户运行 | 自动回退 copy + warning；README 文档化 | 后端 | 已设计 |
-| R-03 | HEIC/RAW 系统依赖 | 中 | Linux/Windows 用户 | extras 安装；CI 跨平台矩阵 | 平台 | 已设计 |
-| R-04 | 内存爆炸（>10 万脸） | 中 | 大型家庭相册 | HNSW + 分批聚类；流式写入 | 后端 | 已设计 |
-| R-05 | 模型/数据出境合规 | 中 | 用户网络受限 | 默认离线；显式 opt-in 下载 | 产品 | 已设计 |
-| R-06 | 同卵双胞胎误并 | 低 | 真实用户反馈 | 提高阈值 + `review` 拆分 | 算法 | 监控 |
-| R-07 | ONNX 与 InsightFace 版本不匹配 | 中 | 升级依赖 | 锁定版本；CI smoke 跑过 | 后端 | 已设计 |
-| R-08 | 输出目录被外部破坏 | 低 | 用户手动编辑 | 每次 run 启动时自检 + 自愈 | 后端 | 已设计 |
+| ID | 决策 | 状态 | 推翻成本 |
+|---|---|---|---|
+| ADR-001 | HTTP 框架 = FastAPI | ✅ Accepted | 低 |
+| ADR-002 | DB = SQLite WAL | ✅ Accepted | 低 |
+| ADR-003 | 后台任务 = asyncio.Queue + APScheduler | ✅ Accepted | 低 |
+| ADR-004 | 文件监听 = watchdog + 周期兜底 | ✅ Accepted | 低 |
+| ADR-005 | 向量索引 = hnswlib（沿用 v2.x） | ✅ Accepted | 极低 |
+| ADR-006 | 前端 = React + Vite + TypeScript | ✅ Accepted | 中 |
+| ADR-014 | UI 组件 = shadcn/ui（Radix + Tailwind，复制源码） | ✅ Accepted | 低 |
+| ADR-007 | 查看器 = 自研 React + @use-gesture + framer-motion | ✅ Accepted | 中 |
+| ADR-008 | 实时通信 = SSE | ✅ Accepted | 低 |
+| ADR-009 | 数据目录 = XDG_DATA_HOME 默认 | ✅ Accepted | 极低 |
+| ADR-010 | 单进程异步（不 gunicorn） | ✅ Accepted | 低 |
+| ADR-011 | 缩略图 = Pillow 优先 | ✅ Accepted | 低 |
+| ADR-012 | 路径白名单 = 运维配置 + resolve 校验 | ✅ Accepted | 极低 |
+| ADR-013 | v3 无用户体系（反代负责鉴权） | ✅ Accepted | 中（v4 加）|
 
-## 2. 技术决策记录（ADR）
+## 1. 关键风险
 
-> 格式：Context / Decision / Consequences。每条 ADR 一旦写入不再修改，仅追加新的覆盖。
+### 1.1 R-1: 大目录 OOM
 
-### ADR-001 选用 InsightFace (buffalo_l/sc) 作为默认识别模型
-- **Context**：需要高准确率且纯本地的人脸检测+嵌入。
-- **Decision**：默认 InsightFace `buffalo_l`（高精度），`buffalo_sc` 作为 `--fast` 选项。
-- **Consequences**：
-  - 优：SOTA 准确率；ONNX 自托管可控；社区活跃。
-  - 劣：模型 100MB+；CPU 推理较慢。
-  - 后续：可替换为更新模型（`MobileFaceNet` 备选）。
+**风险**：扫描 100w+ 张照片时 `ingest/detector` 一次性加载所有图片 → 内存爆。
 
-### ADR-002 聚类算法默认 HDBSCAN
-- **Context**：n 大、未知人数、噪声不可避免。
-- **Decision**：HDBSCAN + cosine + 人工约束；先用 HNSW 构图避免 n² 内存。
-- **Consequences**：
-  - 优：自动选阈值；对密度变化鲁棒。
-  - 劣：参数仍需调；与距离度量耦合。
+**缓解**：
+- 流式处理（`async iterator`），**不缓存图片**
+- 缩略图生成是**写文件流**，不读全图到内存
+- SQLite 批量提交（每 1000 张脸一次 `COMMIT`）
+- detector 输入 size 限制（如 `det_size=(320, 320)`）
 
-### ADR-003 输出以软链接为主、拷贝为回退
-- **Context**：用户期望「源不动 + 整理结果可独立访问」。
-- **Decision**：默认 `os.symlink`；Windows 普通用户回退 `copy2`；失败时显式 warning。
-- **Consequences**：
-  - 优：不修改源；跨平台行为可解释。
-  - 劣：Windows 用户在非管理员下体验降级。
+**Owner**：M6 实施时验证。
 
-### ADR-004 元数据以 SQLite 为主、JSON 镜像
-- **Context**：检索 / 增量 / 关系查询；需要可读可移植。
-- **Decision**：SQLite 作为权威；`index.json` 镜像关键关系便于调试；不在 JSON 中存 embedding。
-- **Consequences**：
-  - 优：可移植、可单文件备份；性能优于纯文件。
-  - 劣：JSON 大集合时反向序列化慢；只放必要字段。
+### 1.2 R-2: watchdog 在 Docker bind mount 失效
 
-### ADR-005 默认完全离线、显式 opt-in 网络
-- **Context**：隐私承诺与最小可用。
-- **Decision**：除非 `--allow-network`，禁止任何网络 IO（模型下载/遥测全部禁）。
-- **Consequences**：
-  - 优：与产品目标 G2 一致；合规简单。
-  - 劣：首次使用需手动下载模型或在文档指引下启用一次。
+**风险**：macOS / Windows / Docker 容器内 watchdog 事件不可靠。
 
-### ADR-006 进程内 ONNX session、IO 与推理流水线化
-- **Context**：单进程内存控制与吞吐。
-- **Decision**：
-  - CPU 推理：`ProcessPoolExecutor`，每 worker 独立 ONNX session；`--workers = min(os.cpu_count(), 4)`。
-  - GPU 推理：单进程 + `ThreadPoolExecutor`，`--workers = 1`，通过 `--prefetch` 提吞吐。
-  - `asyncio.Queue` 串联 scan → decode → detect/embed → persist。
-  - HDBSCAN 聚类单进程跑；不与推理并行（避免内存峰值叠加）。
-- **Consequences**：
-  - 优：CPU/GPU 行为可预测；内存可控。
-  - 劣：多 GPU 调度需 v0.2+ 完善；CPU 多 worker 内存线性增长。
+**缓解**：
+- 周期轮询兜底（默认 5 分钟）
+- 文档明确：Docker bind mount 下推荐用卷（`/data` 内部）而非 bind
 
-### ADR-008 输出目录原子切换（staging → rename）
-- **Context**：保证运行中断或失败时旧结果可恢复。
-- **Decision**：所有 `pick-face run` 默认 `--atomic`：在 `<out>/.staging-<run_id>/` 完整构造结果，成功后 `rename` 替换 `<out>`，旧目录改名 `<out>/.prev-<run_id>`。
-- **Consequences**：
-  - 优：失败可回滚；用户永远不会看到「半成品」结果。
-  - 劣：磁盘占用翻倍（保留 `.prev-`）；大输出目录 rename 在 Windows 上较慢。
+**Owner**：M8 实施时验证。
 
-### ADR-009 元数据唯一权威 = SQLite；HNSW/JSON 都是缓存
-- **Context**：崩溃恢复、跨机器迁移、版本升级的可靠性。
-- **Decision**：
-  - `index.sqlite` 是 source/face/cluster/link 的唯一权威。
-  - HNSW 由 `pick-face index --rebuild-hnsw` 从 SQLite 重建。
-  - `index.json` 仅用于调试/grep，不参与运行逻辑。
-  - schema 升级走 `schema_migrations` 表 + 不可变 SQL 脚本。
-- **Consequences**：
-  - 优：崩溃可恢复；跨机器迁移可靠；可回放。
-  - 劣：HNSW 偶尔需要 rebuild（开销大但 O(n) 可接受）。
+### 1.3 R-3: HNSW + SQLite 不一致（崩溃恢复）
 
-### ADR-007 不内置任何遥测；诊断信息仅本地落盘
-- **Context**：用户对本地工具的隐私预期；崩溃信息收集需明确边界。
-- **Decision**：
-  - 不引入任何 SDK / 统计 / 分析。
-  - 默认运行不写任何超出 `<output>` 与 `<output>/.cache/` 的文件。
-  - 仅当用户显式 `--diagnostics` 时，写入 `<output>/.cache/diagnostics-<ts>.zip`，内容包括：CLI 参数（去敏感）、`run` 表、`error_log`、模型版本；**不包含**原图、embedding、文件内容。
-- **Consequences**：
-  - 优：零隐私争议；行为可审计。
-  - 劣：bug 反馈需用户主动附 diagnostics。
+**风险**：服务崩溃时，HNSW 已落盘但 SQLite 还没 COMMIT（或反过来）。
+
+**缓解**：
+- HNSW 写盘 = SQLite COMMIT **同一事务内**（应用层协调）
+- 启动时**自检**：HNSW 的 `id_map` 必须 ⊆ SQLite 的 `faces.id`；不一致 → 重建 HNSW
+- SQLite WAL 模式保证不撕裂
+
+**Owner**：M6-T-7 实施时设计。
+
+### 1.4 R-4: 路径穿越（US-1 AC-2）
+
+**风险**：用户配置 `/mnt/photos` 后，攻击者用 `/api/photos?path=../../etc/passwd` 读敏感文件。
+
+**缓解**：
+- **永远不**用 `query_params["path"]`；用 `photo_id` 反查 `photos.path`
+- `/api/config/paths` 接受路径前必须 `Path.resolve()` + 白名单校验
+- 单元测试覆盖 `../etc/passwd`、`C:\Windows\System32` 等攻击向量
+
+**Owner**：M6-T-2 实施时写测试。
+
+### 1.5 R-5: 模型权重首次下载失败
+
+**风险**：用户首次启动服务时需要下载 ~10 MB (yunet-sface) 或 ~261 MB (yunet-arcface)。网络中断 / 磁盘满 / 权限不足。
+
+**缓解**：
+- 启动期 `init-models` 步骤（CLI）→ 与 v2.x 相同机制
+- 失败时 `/api/health` 返回 `model_status: missing`
+- UI 显示"请运行 `pick-face-web init-models`"
+
+**Owner**：M6 沿用 v2.x 机制。
+
+### 1.6 R-6: Web 查看器性能（4K 屏 / 100+ 缩略图同时渲染）
+
+**风险**：4K 屏瀑布流同时 100+ 缩略图，FPS 卡顿。
+
+**缓解**：
+- 缩略图 256×256 JPEG（< 30 KB/张）
+- `react-photo-album` 已有虚拟化
+- `loading="lazy"` + `IntersectionObserver`
+- 必要时启用 `react-window` 虚拟列表
+
+**Owner**：M7 实施时性能测试。
+
+### 1.7 R-7: 浏览器反代 / nginx 配置错误导致 Range 失效
+
+**风险**：HTTP Range 流式原图在 nginx 默认配置下不工作（`gzip` 干扰）。
+
+**缓解**：
+- 部署文档示例显式关 `gzip` for `/api/photos/*`
+- 加 `Accept-Ranges: bytes` 验证（curl 测试）
+
+**Owner**：M10 文档 + 测试。
+
+### 1.8 R-8: 商业合规（AC-9）泄漏
+
+**风险**：用户安装 `pick-face-modelpack-insightface` 后，default pack 仍是 InsightFace，导致无意中商用。
+
+**缓解**：
+- AC-9 fail-safe：`accept_noncommercial_model_license = false` 默认
+- NC 包必须显式 `I AGREE`
+- 与 v2.x 复用
+
+**Owner**：M6 沿用。
+
+## 2. 待决议题
+
+### 2.1 O-1: 是否引入 Celery？
+
+**问题**：单机 asyncio 任务足够，但多机部署时 Celery 是事实标准。
+
+**当前决策**：v3 不引入。需要分布式时（v4+）再评估。
+
+### 2.2 O-2: 是否引入 Next.js？
+
+**问题**：Next.js 自带 SSR / API routes，可省 SPA + FastAPI 两层。
+
+**当前决策**：不引入。**理由**：
+- 服务端逻辑（detector / embedder）不适合 Next.js（Python 生态）
+- 前端要单页应用，与 SSR 关系不大
+
+### 2.3 O-3: 多用户 / Auth 何时做？
+
+**当前决策**：v3 不做。文档明确"反代（caddy / nginx）做 HTTPS + Basic Auth"。  
+**v4 引入时机**：用户量增长 / 有 SaaS 需求时。
+
+### 2.4 O-4: WebSocket 是否需要？
+
+**当前决策**：仅 SSE。需要双向（v4 多用户实时协作）时再加。
+
+## 3. ADR 详情
+
+### 3.1 ADR-014 — UI 组件 = shadcn/ui
+
+**日期**：2026-08-12
+**状态**：✅ Accepted
+**推翻成本**：低（每个组件都是源码，可单独替换）
+
+**背景**：v3 前端需要一套无障碍 + 设计 token + 可定制的 UI 组件库，且要支持自托管相册的"克制风格"。
+
+**候选**：
+| 方案 | 优点 | 缺点 |
+|---|---|---|
+| **shadcn/ui（Radix + Tailwind）** | 行为/样式分离、源码复制可控、设计 token 一致 | 需手动组合（无开箱即用 Theme） |
+| MUI | 组件最全 | Material Design 风格强；CSS-in-JS bundle 大 |
+| Chakra | API 好；可定制主题 | 体积大；定制要走 token 系统 |
+| Ant Design | 后台风 | 太"管理后台"，相册调性不符 |
+| 纯 Radix + 自写 Tailwind | 完全可控 | 每个组件都要从零写 class，开发慢 |
+
+**决策**：shadcn/ui。
+
+**理由**：
+1. **行为正确性** — Radix UI 提供 WAI-ARIA 合规的 Dialog / DropdownMenu / Toast / Tabs；这些"看似简单"的组件若手写，键盘导航 / focus trap / 屏幕阅读器兼容性极易出错
+2. **样式可控** — shadcn/ui 把组件源码（TSX + Tailwind class）通过 CLI 复制到 `src/web/components/ui/`，**不是 npm 依赖**。要改样式直接改源码，不会被依赖锁死
+3. **设计 token 化** — 颜色 / 间距 / 字体走 CSS 变量（`--background` / `--foreground` / `--primary` ...），换肤/白标只改 CSS 变量即可
+4. **暗色模式内建** — `darkMode: 'class'` + token 变量；ThemeToggle 一键切换
+5. **零运行时 CSS-in-JS** — Tailwind 编译期产出 class，不增加 bundle 体积
+6. **与 FastAPI 契合** — 表单用 `react-hook-form` + `zod`，`zod` schema 与 Pydantic 类型互译（手动或半自动），前后端 schema 共源
+
+**权衡**：
+- 没有"开箱即用整套主题"——shadcn/ui 只给一组默认 token，相册风格要自己调
+- 组件更新要主动跑 `pnpm dlx shadcn@latest add <new-component>` 拉新版（但因为是源码 merge，diff 可控）
+- 团队需要熟悉 Tailwind utility class（学习成本低）
+
+**后续**：
+- M6 第一次提交时附 `pnpm dlx shadcn@latest init` 输出 + 选定的 16 个基础组件
+- 主题 token 集中在 `src/web/styles/globals.css`
+- 严禁"为了快"绕开 shadcn/ui 直接写 `<div className="bg-slate-900 ...">`（除非组件库真的没有）
+
+## 4. 引用与延伸阅读
+
+- [02 §栈选型](02-technical-pre-research.md) — 决策依据
+- [03 §服务架构](03-architecture-design.md) — ADR-008 到 ADR-013 的实现
+- [11 §商业合规](11-commercial-compliance.md) — AC-9 决策

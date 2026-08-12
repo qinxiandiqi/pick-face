@@ -1,8 +1,9 @@
 # pick-face
 
-> Local offline image face recognition & organization CLI.
-> Scan → detect & embed faces → cluster by person → emit
-> `person-XXXX/<src_rel_path>` links under your output directory.
+> **Local-first face-photo gallery, served as a self-hosted web app.**
+> Point it at a directory of photos → it builds a face-clustered virtual
+> album, browsable in your browser with full-screen viewer, gestures,
+> and incremental updates.
 
 ---
 
@@ -11,10 +12,11 @@
 The `pick-face` **code** is Apache-2.0; you may use it freely including
 in commercial products.
 
-The **default model pack** (`yunet-mfn`, OpenCV Zoo YuNet + MobileFaceNet INT8)
-is **Apache-2.0** as well — fully commercial-friendly, no acknowledgment
-required. You can deploy pick-face in commercial products out of the box
-with no extra license work.
+The **default model pack** (`yunet-sface`, OpenCV Zoo YuNet + SFace INT8,
+per-model MIT) and the **high-precision tier** (`yunet-arcface`, ONNX
+Model Zoo ArcFace R100, Apache-2.0 + MIT detector) are both
+**commercial-friendly** — no acknowledgment required. You can deploy
+pick-face in commercial products out of the box with no extra license work.
 
 If you opt into the **InsightFace** model pack (`buffalo_l` / `buffalo_sc` /
 `antelopev2`) via `pip install pick-face-modelpack-insightface`, those
@@ -24,14 +26,16 @@ and require explicit `accept_noncommercial_model_license = true`.
 
 See [Commercial compliance](11-commercial-compliance.md) for the four
 legal paths to commercial deployment. pick-face refuses to download
-model weights unless you pass `--allow-network` and explicitly type
-`I AGREE` (NC-research packs only).
+NC-research weights unless you pass `--allow-network` and explicitly type
+`I AGREE`.
 
 | Asset | License | Commercial OK? |
 |---|---|---|
 | `pick-face` code & docs | Apache-2.0 | ✅ |
-| **Default pack `yunet-mfn`** (OpenCV Zoo) | **Apache-2.0** | **✅** |
+| **Default pack `yunet-sface`** (OpenCV Zoo) | **MIT** | **✅** |
+| **High-precision tier `yunet-arcface`** (ONNX Model Zoo) | **Apache-2.0** | **✅** |
 | `onnxruntime`, `hnswlib`, `hdbscan`, Pillow, OpenCV | MIT / Apache-2.0 / BSD | ✅ |
+| `fastapi`, `uvicorn`, `watchdog` | MIT / BSD | ✅ |
 | `insightface` Python package (opt-in plugin code) | MIT | ✅ |
 | `buffalo_l` / `buffalo_sc` / `antelopev2` weights (opt-in) | **InsightFace non-commercial-research** | **❌** |
 
@@ -39,36 +43,69 @@ model weights unless you pass `--allow-network` and explicitly type
 
 ## 5-minute quickstart
 
+### Docker (recommended)
+
+```bash
+docker run -d \
+  --name pick-face \
+  -p 8000:8000 \
+  -v /mnt/photos:/photos:ro \
+  -v ~/.pick-face:/data \
+  -e PICK_FACE_HOME=/data \
+  pick-face/web:latest
+
+# Open http://localhost:8000 → configure /photos path → click "Scan"
+```
+
+### Bare metal (uv)
+
 ```bash
 # 1. Install with uv
 uv venv
-uv pip install -e ".[heic]"          # add raw if you shoot RAW photos
+uv pip install -e ".[web,heic]"
 
-# 2. Generate a starter config (default pack = yunet-mfn, Apache-2.0)
-pick-face init
+# 2. Initialize config (interactive; creates ~/.pick-face/config/config.toml)
+pick-face-web init
 
-# 3. (Optional) Edit pick-face.toml — change `pack` if you want InsightFace:
-#    - keep "yunet-mfn" for commercial-friendly Apache-2.0 default
-#    - switch to "buffalo_l" for NC-research opt-in (requires ack)
+# 3. Download default model weights (yunet-sface ~10 MB, MIT)
+pick-face-web init-models --allow-network
 
-# 4. Download model weights (requires --allow-network)
-#    yunet-mfn: 5 MB, no ack needed (Apache-2.0)
-pick-face init-models --pack yunet-mfn --allow-network
-#    buffalo_l: 325 MB, requires --yes (I AGREE)
-pick-face init-models --pack buffalo_l --allow-network --yes
-
-# 5. Scan + index + cluster + link in one shot
-pick-face run --src ~/Photos --out ~/Photos/by_face
+# 4. Serve the web app (port 8000)
+pick-face-web serve --host 0.0.0.0 --port 8000
+# Open http://localhost:8000 → add /mnt/photos path → click "Scan"
 ```
 
-What you get under `~/Photos/by_face`:
+### Switch to high-precision tier
+
+```bash
+# Edit ~/.pick-face/config/config.toml
+[runtime]
+pack = "yunet-arcface"
+
+[clustering]
+merge_threshold = 0.55      # 512-D cosine hint
+
+# Re-download weights (~66 MB INT8 / ~261 MB FP32)
+pick-face-web init-models --quant int8 --allow-network
+```
+
+### CLI mode (v2.x compatible)
+
+```bash
+# pick-face CLI still works for one-shot scans
+pick-face run --src /mnt/photos -o /tmp/by_face/
+```
+
+---
+
+## What you get
 
 ```
-person-0001/2024-01-01 beach.jpg        # symlink (or hardlink/copy fallback)
-person-0001/2024-02-14 dinner.jpg
-person-0002/2024-03-05 office.jpg
-report.md / report.json / report.html   # audit + license headers
-low_confidence_faces.json               # candidates for `pick-face review apply`
+Browser → http://localhost:8000
+   /persons              # 虚拟相册列表（按"代表性图片 + 该人照片数"排序）
+   /persons/{id}         # 单人瀑布流
+   /persons/{id}/photos  # 查看器（上一张/下一张/缩放/手势）
+   /settings             # 路径白名单 / 模型包 / 阈值配置
 ```
 
 ---
@@ -77,60 +114,68 @@ low_confidence_faces.json               # candidates for `pick-face review apply
 
 **Start here:**
 
-- [Commercial compliance](11-commercial-compliance.md) — read this **before**
-  shipping anything for paid use.
-- [Product requirement](01-product-requirement.md) — what pick-face does,
-  acceptance criteria, and out-of-scope.
+- [Product requirement (PRD)](01-product-requirement.md) — what
+  pick-face v3 does, user stories, acceptance criteria, out-of-scope.
+- [Architecture design](03-architecture-design.md) — FastAPI app +
+  worker + SPA module layout, HTTP API contract.
+- [Commercial compliance](11-commercial-compliance.md) — read this
+  **before** shipping anything for paid use.
 
-**Architecture & engineering:**
+**Engineering:**
 
-- [Architecture design](03-architecture-design.md) — module layout, CLI
-  contract, exit codes, threading model, model pack discovery.
 - [Algorithm pipeline](04-algorithm-pipeline.md) — detect → align →
-  embed → cluster → must-link/cannot-link → review.
-- [Data & storage](05-data-and-storage.md) — SQLite schema, HNSW index,
-  staging symlink swap, atomic rollback.
+  embed → cluster → review. Web service timing notes (long-lived sessions,
+  watchdog triggers).
+- [Data & storage](05-data-and-storage.md) — SQLite schema, HNSW
+  persistence, thumbnail layout, v2 → v3 migration.
 - [Face recognition walkthrough](09-face-recognition-pipeline.md) —
   end-to-end read of every step (best onboarding doc).
-- [Model stack](10-model-stack.md) — **model pack overview** (yunet-mfn
-  default + InsightFace opt-in), detector/embedder backbones, accuracy
-  / size / license trade-offs, ONNX EP matrix.
-- [Raspberry Pi / ARM support](13-raspberry-pi-support.md) — Pi 3B/4/5,
-  RK3588, Apple Silicon compatibility matrix, install steps, perf
-  baselines, swap tips.
-- [Model pack plugins](14-model-pack-plugins.md) — `ModelPack` Protocol,
-  entry-points contract, 50-line example for writing your own pack.
+- [Engineering plan](06-engineering-plan.md) — M6+ milestones (Web
+  service build-out).
+- [Risks & decisions (ADRs)](07-risk-and-decisions.md) — current
+  decision log.
 
-**Research & decision log:**
+**Models & deployment:**
 
-- [Technical pre-research](02-technical-pre-research.md)
-- [Risks & decisions (ADRs)](07-risk-and-decisions.md)
-- [Review notes](08-review-notes.md)
+- [Technical pre-research](02-technical-pre-research.md) — stack
+  choice rationale (FastAPI, SQLite, watchdog, etc.).
+- [Model pack plugins](14-model-pack-plugins.md) — `ModelPack`
+  Protocol, entry-points contract, multi-quant support.
+- [Raspberry Pi / ARM support](13-raspberry-pi-support.md) — Pi 4B/5,
+  RK3588, Apple Silicon compatibility matrix, Docker perf baselines.
+- [Compatibility promise](12-compatibility-promise.md) — what stays
+  stable across v2.x → v3.
 
 **Operational:**
 
 - [Troubleshooting](troubleshooting.md) — common errors with copy-paste
   fixes.
 - [AGENTS index](AGENTS.md) — entry point for AI agents / contributors.
+- [Archive: M5 CLI era](archive/m5-cli/) — historical CLI design docs.
 
 ---
 
 ## Development
 
 ```bash
-uv pip install -e ".[dev,docs]"
+uv pip install -e ".[dev,docs,web]"
 ruff check src tests
 ruff format --check src tests
-pytest -q                              # 230+ tests
-python tests/smoke_cli_scan.py         # end-to-end smoke
+pytest -q                              # 288+ unit tests
 mkdocs serve                           # docs site at :8000
 mkdocs build                           # static site under site/
 ```
 
-See [Engineering plan](06-engineering-plan.md) for the milestone breakdown
-(M0–M5, with M5 covering the model-pack plugin migration) and
-[Architecture design §11](03-architecture-design.md) for the extras matrix
-and exit-code contract (0 / 2 / 3 / 4 / 5).
+Frontend (SPA: React + Vite + TS + shadcn/ui + Tailwind):
+
+```bash
+cd src/web
+pnpm install
+pnpm run dev          # http://localhost:5173 (proxies API to 8000)
+pnpm run build        # → src/pick_face/web/static/
+pnpm run gen-api      # OpenAPI → TypeScript client
+pnpm dlx shadcn@latest add dialog   # add new shadcn/ui component
+```
 
 ---
 
@@ -138,6 +183,7 @@ and exit-code contract (0 / 2 / 3 / 4 / 5).
 
 - Code: Apache-2.0
 - Docs: Apache-2.0
-- Default model pack `yunet-mfn`: Apache-2.0 (commercial-friendly, no ack)
+- Default model pack `yunet-sface`: MIT (commercial-friendly)
+- High-precision tier `yunet-arcface`: Apache-2.0 + MIT (commercial-friendly)
 - Opt-in `buffalo_l` / `buffalo_sc` / `antelopev2`: NC-research — see
   [Commercial compliance](11-commercial-compliance.md)

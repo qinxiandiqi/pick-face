@@ -1,124 +1,191 @@
-# 01 产品需求文档（PRD）
+# 01 产品需求：pick-face Web 相册服务（v3.0）
 
-> 文档版本：v0.1（预研稿） · 2026-07-30 · 状态：**待评审**
+> 文档版本：v3.0 · 2026-08-12 — 产品形态从 CLI 迁移到 **Web 服务**
+> 范围：定义 pick-face v3 的用户故事、核心能力、非目标
+> **本文是单一权威解读**。任何与本文件冲突的章节（README / 03 / 04 / 06 / 09 / 11），以本文件为准。
+> 关联：[02 §栈选型](02-technical-pre-research.md) · [03 §服务架构](03-architecture-design.md) · [04 §聚类流水线](04-algorithm-pipeline.md) · [06 §M6+ 里程碑](06-engineering-plan.md)
 
-## 1. 背景与目标
+## 0. 摘要（60 秒版）
 
-### 1.1 业务背景
-家庭相册、手机备份盘、摄影作品库中长期沉淀了大量图片。当需要「按人查找」时，传统方式依赖手工打标签或文件名搜索，效率极低且覆盖率低。本工具通过**本地离线**的人脸识别，将多个目录中的图片按「人」自动归类，输出可被其它工具直接消费的有序结构。
+pick-face v3 是一个**自托管**的人脸相册服务（Web 服务）：
 
-### 1.2 产品目标
-- **G1** 自动按人脸把多源目录图片整理为「一人一目录」结构。
-- **G2** 全流程在本地完成，**默认不联网**，**默认不上传任何数据**。
-- **G3** 增量友好：支持重复执行、避免重复计算，可恢复中断。
-- **G4** 结果可验证：聚类结果可人工浏览、抽样校验、必要时合并/拆分。
+- 用户在 Web UI 配置**一个或多个图片扫描根路径**（如 `/mnt/photos/2024/`、`/mnt/photos/2025/`）
+- 服务在后台**遍历**这些路径下的所有图片，**检测人脸**，**按人聚类**
+- 用户在浏览器打开 **`/persons`** 看到按人聚合的**虚拟相册**
+- 点开一个人 → 进入瀑布流式图片查看器：上一张 / 下一张 / 缩放 / 手势 / 全屏 / 滑动切换
+- 所有数据保存在本地文件系统，**离线**运行，**不联网**（模型权重首次启动下载一次）
 
-### 1.3 非目标（v1 范围内不做）
-- 人脸属性识别（年龄/表情/口罩）—— 不在主线。
-- 跨设备同步 / 云端协作 —— 仅本地。
-- 视频中的人脸识别 —— 仅静态图片。
-- 自动删除源文件 —— 工具仅创建软链接，不修改源。
+```
+┌─────────────┐       ┌────────────────────┐
+│ 浏览器 SPA  │ HTTP  │  pick-face 服务    │
+│ (React/Vite/TS + shadcn/ui) │ ◀──▶  │  FastAPI / 异步    │
+└─────────────┘       │   ├─ scanner       │
+                      │   ├─ detector      │
+                      │   ├─ embedder      │
+                      │   ├─ indexer       │
+                      │   └─ clusterer     │
+                      └────────┬───────────┘
+                               │
+                ┌──────────────┴──────────────┐
+                ▼                             ▼
+        /mnt/photos/2024/              ~/.pick-face/data/
+        /mnt/photos/2025/              ├── index.sqlite
+                                       ├── index.hnsw
+                                       ├── chips/      # 人脸封面（112×112）
+                                       ├── thumbnails/ # 原图缩略图
+                                       └── covers/     # 虚拟相册封面
+```
 
-## 2. 用户与场景
+## 1. 用户故事
 
-### 2.1 主要用户
-| 用户类型 | 核心诉求 | 关心点 |
-|---------|---------|--------|
-| 普通家庭用户 | 把多年散落照片快速按人分类 | 易用、稳定、隐私 |
-| 摄影爱好者 | 跨多盘/多设备的素材归集 | 准确率、增量速度 |
-| 小型工作室 | 给客户样片按模特归档 | 重复执行可控、链接稳定 |
+### 1.1 US-1 配置扫描路径（首要）
+> 作为用户，我想让 pick-face **扫描我指定的照片目录**，自动找出有脸的图片。
 
-### 2.2 关键场景
-- **S1 首次整理**：选择 2–3 个照片目录 → 一键运行 → 输出目录得到「person-0001/…、person-0002/…」结构。
-- **S2 增量更新**：过几天又导入新照片 → 再次运行 → 新照片被自动并入既有的人物目录，不会重算历史。
-- **S3 校正聚类**：发现 person-0007 实际是两个人 → 在结果中把人脸拖到正确的人物下 → 后续运行沿用。
-- **S4 全量重建**：换算法或调阈值 → 重建索引，输出目录被原子替换。
+**验收标准**：
+- AC-1：Web UI 提供表单，让用户**添加 / 删除**扫描根路径
+- AC-2：每个路径必须通过 `Path.resolve()` + 白名单校验，**禁止** `../../etc/passwd` 之类的穿越
+- AC-3：路径必须存在、可读、含图片文件；不满足时给出明确错误
+- AC-4：保存后立即触发一次扫描（或显式提供"立即扫描"按钮）
 
-## 3. 功能需求
+### 1.2 US-2 后台扫描与进度可见
+> 作为用户，我想**看到扫描进度**（不是黑箱）。
 
-### 3.1 输入管理
-- **F-IN-1** 支持配置**多个**扫描源目录（YAML/TOML/JSON 任一）。
-- **F-IN-2** 默认**递归**扫描子目录，可按 glob 排除（`exclude`）。
-- **F-IN-3** 支持配置允许的图片后缀集合，默认包含 jpg/jpeg/png/webp/heic/tiff/bmp/gif（首帧）。
-- **F-IN-4** 输入目录权限不足 / 包含符号链接时给出明确提示而非崩溃。
+**验收标准**：
+- AC-1：扫描过程中 Web UI 显示进度条（已处理 / 总数）
+- AC-2：失败文件（损坏 / 权限）单独计数，不中断整体
+- AC-3：扫描可暂停、恢复、取消
+- AC-4：扫描结束后给摘要（"新增 N 张、检测出 M 张脸、聚成 K 个虚拟相册"）
 
-### 3.2 识别与归集
-- **F-ID-1** 检测每张图片中的所有人脸并生成嵌入向量。
-- **F-ID-2** 使用无监督聚类在**未知人数**下将人脸分成不同人物。
-- **F-ID-3** 在输出目录为每个人物创建子目录，将该人物对应源图的**软链接**放入其中。
-- **F-ID-4** 重复源图（同名或内容相同）只产生一条结果，策略可配（哈希去重 vs 路径去重）。
-- **F-ID-5** 同源图可关联到多个人物（多人合影）。
+### 1.3 US-3 以人为单位的虚拟相册
+> 作为用户，我想**看到所有"人"的列表**，每个人是一个虚拟相册。
 
-### 3.3 增量与一致性
-- **F-INCR-1** 增量模式：仅处理新增/修改的源图，保留历史结果。
-- **F-INCR-2** 源图被删除时，对应的输出链接被清理（仅清理本工具创建的链接，不动源图）。
-- **F-INCR-3** 一次运行可被中断/恢复，不损坏已写出的链接。
-- **F-INCR-4** 支持「dry-run」与「full-rebuild」两种模式。
+**验收标准**：
+- AC-1：`/persons` 列出所有聚类（按"代表性图片 + 该人照片数"排序）
+- AC-2：可重命名 / 合并 / 删除虚拟相册（review 操作，与 CLI 时代共享 `output/review.py`）
+- AC-3：每个虚拟相册点开后是瀑布流，展示该人所有出现过的原图
+- AC-4：缩略图懒加载，原图按需请求
+- AC-5：**每个虚拟相册必须有清晰的"封面脸"**——使用 `faces.chip_path`（112×112 对齐后人脸），不是原图缩略图；用户看到列表就能认出是谁
 
-### 3.4 输出与可观察性
-- **F-OUT-1** 输出目录结构清晰稳定：`<output>/<person-id>/<source-relative-path>`，其中 `person-id` 形如 `person-0001`，对应一份 `meta.json` 描述该人物。
-- **F-OUT-2** 顶层维护一份 `index.json` 或 `index.sqlite`，记录扫描快照、人物-人脸-源图映射、运行历史。
-- **F-OUT-3** 提供命令行/JSON 两种进度输出。
-- **F-OUT-4** 输出目录下生成 `report.html` 或 `report.md`：人物数、人脸数、置信度分布、异常清单。
+### 1.4 US-4 图片查看器（核心交互）
+> 作为用户，我想**像普通相册 App 一样**浏览单张图片。
 
-### 3.5 校正与人工介入
-- **F-OP-1** 合并/拆分人物：将人脸在不同人物之间移动；后续运行以人工标注为强约束。
-- **F-OP-2** 标记噪声人脸：将其从聚类中排除。
-- **F-OP-3** 命令行子命令：`scan / index / cluster / link / report / review / gc`。
+**验收标准**：
+- AC-1：上一张 / 下一张（键盘 ←/→、点击、滑动）
+- AC-2：双击 / 双指放大缩小，鼠标滚轮缩放
+- AC-3：拖动图片查看细节（pan）
+- AC-4：全屏切换（Esc 退出，←/→ 在全屏下仍然工作）
+- AC-5：可看到 EXIF 日期、文件名、所在原图路径
+- AC-6：手机端支持触摸手势（pinch、swipe、tap）
+- AC-7：**绝不在前端保存原图到相册**——原图通过 HTTP Range 流式返回，不复制原图到 service 数据目录
 
-### 3.6 跨平台
-- **F-PLAT-1** Windows / macOS / Linux 三平台均能完成「软链接」目标；无权限时回退为**拷贝**并明确日志告警。
+### 1.5 US-5 增量更新
+> 作为用户，新照片加进扫描路径后，**相册自动更新**，无需手动重扫。
 
-## 4. 非功能需求
+**验收标准**：
+- AC-1：服务**监听**扫描路径的目录变更（`inotify` / `watchdog` / 周期轮询 三选一）
+- AC-2：新文件自动加入扫描队列
+- AC-3：删除的文件**软删除**（不在数据库消失，留待人工 review）
+- AC-4：增量扫描的资源使用（CPU/内存）有上限，不阻塞 HTTP 响应
 
-| 维度 | 指标 |
-|------|------|
-| 准确性 | 在 LFW 公开子集上，聚类 pairwise precision ≥ 0.95（同一对被分到不同人为错误），pairwise recall ≥ 0.85。 |
-| 性能 | 单核 CPU 推理 ≥ 2 张/秒（中等分辨率 1080×1500）；GPU 可用时 ≥ 30 张/秒。 |
-| 稳定性 | 1 万张图片的扫描/聚类在单次进程内完成，无内存峰值 OOM；支持断点续跑。 |
-| 可移植 | Python 3.10–3.12；包管理统一 `uv`（`uv venv` / `uv pip install`），提供 `pyproject.toml` + `requirements.lock`。 |
-| 隐私 | 默认离线；显式 `--allow-network` 才允许下载模型。 |
-| 许可证 | pick-face 本体 Apache-2.0；默认模型 `buffalo_l` **非商业研究用途**（详见 [11-commercial-compliance.md](11-commercial-compliance.md) 与 R-COM-1）。 |
-| 可维护 | 模块化，关键算法可替换（接口稳定），测试覆盖率 ≥ 70%。 |
+### 1.6 US-6 多源聚合
+> 作为用户，我想**多目录聚合**——例如 `/mnt/photos/2024/` 和 `/mnt/photos/2025/` 都扫描，跨目录同人仍然归到一个虚拟相册。
 
-## 5. 验收标准（v0.1 预研版）
+**验收标准**：
+- AC-1：多个扫描路径共享同一套人脸索引（同一 cluster）
+- AC-2：跨目录同人聚类精度 ≥ 单目录聚类（**F1 不下降**）
+- AC-3：UI 上能看到"这个人来自 N 个目录"
 
-通用前置：所有验收跑在 `bench/dataset_demo/` 提供的去标识化家庭相册 demo 上（**50 人 / 约 1000 张**——每人在 5–30 张之间随机，确保稀有人物也能被检测，详见 [06 §3 测试策略](06-engineering-plan.md#3-测试策略) 与 fixture `tests/fixtures/demo_dataset/`）。评测脚本：`tests/acceptance/run_eval.py`，输出 `eval_report.json` 含 pairwise precision/recall、B³ F1、误合并率、运行时间。
+## 2. 核心能力（必须）
 
-- [ ] **AC-1 聚类一致性**：在 demo 集上，聚类 pairwise precision ≥ 0.95，pairwise recall ≥ 0.85，B³ F1 ≥ 0.90（相对 `InsightFace buffalo_l + HDBSCAN(cosine, min_cluster_size=3, min_samples=2) + 簇质心合并阈值 0.55` 基线）。
-- [ ] **AC-2 幂等**：对同一目录重复运行，第二次输出与第一次**逐字节一致**（基于 `(abs_path, size, mtime, sha1_8)` 幂等键），可用 `diff -r` 通过。
-- [ ] **AC-3 增量**：在首次完成索引的状态下新增 50 张图，第二次运行检测+嵌入阶段总耗时 < 30 秒，且无重复写入历史 `face`。
-- [ ] **AC-4 软链接回退**：
-  - Linux/macOS：100% `os.symlink` 成功。
-  - Windows 管理员/开发人员模式：≥ 95% symlink；其余自动回退 junction（目录）或 hardlink（文件）。
-  - Windows 普通用户：自动回退 `copy2`，并在 `report.md` 顶部 `Warnings` 节列出。
-- [ ] **AC-5 清理**：删除 5% 源图后再运行，对应输出链接被移除（`gc` 子命令复核），输出目录其它链接不受影响。
-- [ ] **AC-6 复现**：README 给出 5 分钟 quickstart；`bench/dataset_demo/README.md` 注明数据来源、许可、再生成命令；`pytest -q` 全过、`tests/acceptance/run_eval.py` 产出 `eval_report.json`。
-- [ ] **AC-7 跨平台 smoke**：ubuntu-latest / macos-latest / windows-latest CI 各跑通 `pick-face run --src bench/dataset_demo/src --out <tmp>` 一次。
-- [ ] **AC-8 中断恢复**：`pick-face run` 在第 N 张图被 SIGTERM 中断后，重新运行同一命令能继续完成索引，不出现重复 face 或孤儿链接。
-- [ ] **AC-9 商业合规护栏（合规底线，**任何情况下不得降低**）**：
-  - pick-face **不**分发任何 `*.onnx` 模型权重进 git / wheel / sdist / docker / PyPI 镜像（CI 校验 `tests/acceptance/test_no_model_in_distribution.py`）。
-  - 启动时若检测到当前模型为 `buffalo_*`，而 `pick-face.toml` 的 `accept_noncommercial_model_license = false` —— **拒启动**（退出码 2），错误信息明确指向 [11-commercial-compliance.md](11-commercial-compliance.md)。
-  - `pick-face init-models` 首次下载前**强制交互式确认** InsightFace 权重 license 条款（详见 [11 §2.1](11-commercial-compliance.md)）。
-  - `report.md` 顶部必须打印「Model: ... | License: ...」一行，便于审计。
-  - 测试集中**禁止**提交任何 `*.onnx`（含 `tests/fixtures/`）。
+| 能力 | 必须 | 说明 |
+|---|---|---|
+| 路径白名单 + 路径穿越防护 | ✅ | 安全底线 |
+| 后台扫描（异步任务） | ✅ | 不可阻塞 HTTP |
+| 人脸检测 + 嵌入 | ✅ | 复用 v2.x Model Pack 架构 |
+| HNSW 索引 | ✅ | 复用 `store/index_hnsw.py` |
+| HDBSCAN 聚类 | ✅ | 复用 `ingest/cluster.py` |
+| Review（重命名 / 合并 / 删除） | ✅ | 复用 `store/review.py` |
+| 缩略图生成 | ✅ | 新增；存 `~/.pick-face/data/thumbnails/<hash>.jpg` |
+| 人脸 chip 生成 | ✅ | 新增；存 `~/.pick-face/data/chips/<face_id>.jpg`（虚拟相册封面） |
+| 虚拟相册封面 | ✅ | 新增；用 chip，不用原图缩略图；存 `~/.pick-face/data/covers/person_<id>.jpg` |
+| HTTP API | ✅ | FastAPI + OpenAPI 文档 |
+| SPA 前端 | ✅ | React + Vite + TS + shadcn/ui + Tailwind 单页应用 |
+| 流式原图（HTTP Range） | ✅ | 不复制原图到数据目录 |
+| 增量扫描 | ✅ | inotify / 周期轮询 |
+| 离线运行 | ✅ | 模型下载一次后无外网请求 |
+| AC-9 模型许可护栏 | ✅ | 复用 v2.x 的 LicenseClass 体系 |
 
-## 6. 风险与依赖
+## 3. 非目标（v3 不做）
 
-- 聚类准确率受光照、年龄跨度、遮挡影响显著，需要保留人工校正入口。
-- HEIC/RAW 解码依赖系统库；macOS 自带，Windows/Linux 需额外安装（extras：`pick-face[heic]`、`pick-face[raw]`）。
-- Windows 创建符号链接需「开发人员模式」或管理员权限，需在文档中说明回退策略。
-- 模型许可：默认使用 InsightFace `buffalo_l`，其代码 MIT、模型**非商业研究用途**；本工具的发行许可（建议 Apache-2.0）与模型许可解耦，README 顶部明记「默认不联网 + 模型来源 + 非商用提示」。**完整合规指南见 [11-commercial-compliance.md](11-commercial-compliance.md)。**
-- 本工具不内置任何遥测；崩溃诊断信息仅在用户显式 `--diagnostics` 时写本地文件（见 [07-risk-and-decisions.md](07-risk-and-decisions.md) ADR-007）。
+| 不做 | 原因 |
+|---|---|
+| **用户账号 / 多租户** | 单用户自托管优先；多用户留给 v4 |
+| **照片编辑**（裁剪、滤镜） | 服务只聚类，不编辑 |
+| **上传到云** | 离线 / 自托管是核心承诺 |
+| **AI 自动打标签**（人物关系识别、场景识别） | v3 只做人脸聚类 |
+| **手机 App** | v3 只做 Web；PWA 已能满足 90% 移动端 |
+| **视频抽帧** | v3 只处理图片；视频留给 v3.1 |
+| **HEIC / RAW 之外的格式强需求** | 复用 Pillow / pillow-heif / rawpy，已覆盖 |
 
-### 6.1 商业合规风险（必读）
+## 4. 验收里程碑（与 06 §里程碑 对齐）
 
-| ID | 风险 | 缓解 | 责任 | 处置 |
-|----|------|------|------|------|
-| **R-COM-1** | 默认 `buffalo_l` 权重 license 禁止商业用途；用户**使用**即触发条款 | ①代码与权重**完全解耦**（不捆绑、不进仓、不进 wheel/docker/CI）；②`pick-face.toml` 加 `accept_noncommercial_model_license` 字段，默认 `false`；③`init-models` 强制交互确认；④启动时**强校验**，商用 `false` + buffalo_l → 拒启动；⑤README/LICENSE/docs/11 顶部明记"用户自负" | **商业用户**自负合规义务；项目方**不为第三方权重背书** | [11-commercial-compliance.md](11-commercial-compliance.md)（单一权威） |
+| 验收编号 | 内容 | 通过条件 |
+|---|---|---|
+| AC-W1 | 路径白名单 + 配置页可用 | 提交 `../etc/passwd` 被拒；合法路径被接受 |
+| AC-W2 | 扫描 1000 张图片，后台任务正常运行 | 进度可见；失败文件不中断；CPU 不爆 |
+| AC-W3 | 人脸检测 + 嵌入完成，索引构建 | SQL 查到 ≥ 800 张脸的 embedding |
+| AC-W4 | HDBSCAN 聚类，B³ F1 ≥ 0.85（AT&T 实测） | 见 04 §聚类验收 |
+| AC-W5 | `/persons` 列出 ≥ 10 个虚拟相册 | UI 可见、可点开 |
+| AC-W5b | 虚拟相册封面 = 112×112 人脸 chip | 用户一眼认出"这是谁" |
+| AC-W6 | 图片查看器支持 上一张 / 下一张 / 缩放 / 拖动 | 浏览器端 E2E 测试通过 |
+| AC-W7 | 流式原图（不复制到数据目录） | `du -sh ~/.pick-face/data/` 不增长（除了 chips / thumbnails / covers） |
+| AC-W8 | 增量：新加一张图，30 秒内出现在聚类结果 | Webhook 或轮询 |
+| AC-W9 | 多目录聚合：跨目录同人合并 | 手动建 fixture，验证 B³ F1 不降 |
 
-## 7. 后续版本展望
+## 5. 部署形态
 
-- v0.2：交互式 Web 预览（仅本地）。
-- v0.3：视频抽帧 + 时间轴。
-- v0.4：多机协同（共享索引库）。
+```
+单容器部署（推荐）：
+  Docker 镜像
+  ├─ FastAPI (uvicorn, port 8000)
+  ├─ worker (后台扫描 + 索引)
+  └─ SQLite / 共享 volume
+
+裸机部署：
+  uv venv
+  uv pip install -e ".[web]"
+  pick-face-web serve --config /etc/pick-face/config.toml
+```
+
+**资源占用基线**（100k 张照片）：
+- 内存：~1.5 GB（detector session + HNSW + HDBSCAN）
+- 磁盘：原图 + thumbnails（~5 GB）+ SQLite（~500 MB）+ HNSW（~200 MB）+ chips（~5 GB / 800k 张脸）
+- CPU：x86 4 核 + GPU 可用时首扫 ~30 分钟
+
+**应用根目录**（所有 pick-face 持久化文件归这一个目录，原图不在内）：
+
+```
+~/.pick-face/                             # 应用根目录（= PICK_FACE_HOME 默认值）
+├── config/                               # 配置（用户可编辑）
+├── data/                                 # 数据（备份这一项 = 备份整个相册）
+└── cache/                                # 缓存（模型权重可重下）
+```
+
+> 可通过环境变量 `PICK_FACE_HOME` 或配置 `[server] data_dir` 覆盖根目录（Docker / 多实例）。
+
+## 6. 与 v2.x（CLI 时代）的兼容
+
+- **算法内核 100% 复用**：detector / embedder / indexer / clusterer / review
+- **Model Pack 架构 100% 复用**：`yunet-sface`（默认 MIT）/ `yunet-arcface`（高精度 Apache-2.0）
+- **CLI 子命令保留为可选**：`pick-face-web run --src ...` 仍能用单次 CLI 模式（无 Web UI）
+- **配置文件路径**：`~/.config/pick-face/config.toml`（与 v2.x 兼容）
+
+## 7. 引用与延伸阅读
+
+- [02 §栈选型](02-technical-pre-research.md) — 为什么选 FastAPI / SQLite / React + shadcn/ui
+- [03 §服务架构](03-architecture-design.md) — 服务模块、worker、HTTP API
+- [04 §聚类流水线](04-algorithm-pipeline.md) — 检测 → 嵌入 → 聚类算法细节
+- [05 §数据与存储](05-data-and-storage.md) — SQLite schema / 文件布局
+- [06 §M6+ 里程碑](06-engineering-plan.md) — 何时能上线
+- [11 §商业合规](11-commercial-compliance.md) — NC-research 模型护栏
+- 归档：[M5 CLI 时代 PRD](archive/m5-cli/01-product-requirement.md) — 历史参考

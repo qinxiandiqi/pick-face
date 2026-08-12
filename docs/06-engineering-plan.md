@@ -1,189 +1,190 @@
-# 06 工程规划与里程碑
+# 06 工程计划：M6+ 里程碑（v3.0 Web 相册服务）
 
-> 文档版本：v0.1（预研稿） · 2026-07-30
+> 文档版本：v3.0 · 2026-08-12
+> 范围：从 M5（CLI 落地）到 M6（Web 服务化）的里程碑拆解
+> 关联：[01 PRD](01-product-requirement.md) · [03 §服务架构](03-architecture-design.md)
 
-## 1. 阶段划分
+## 0. 摘要
 
-| 阶段 | 目标 | 周期（建议） | 出口标准 |
-|------|------|-------------|---------|
-| **M0 预研** | 完成技术选型与文档 | 已基本完成 | docs/ 全部文档就位并评审通过 |
-| **M1 原型 v0.1** | 单线程 CLI、JPEG/PNG、WebP；CPU；软链接 | 2 周 | 200 张样本验收 ≥ 80% 一致 |
-| **M2 增量 + 校正** | 增量、review 子命令、HEIC 基础支持 | 1.5 周 | AC-3 / AC-5 通过 |
-| **M3 GPU + 性能** | GPU 加速、并行、长任务进度 | 1.5 周 | 1 万张 ≤ 1h（GPU） |
-| **M4 1.0** | 报告完善、文档、跨平台 CI、pip 打包 | 1 周 | 三个平台 smoke test 全过 |
-| **M5 路线 B** | Model Pack 插件架构 + 默认 `yunet-mfn` | 2 周 | Pi 3B 跑通 + AC-1 不降 + 商业零摩擦默认 |
+v2.x（M0–M5）已经把"CLI 工具 + 算法内核 + Model Pack 架构"做完了。M6+ 把产品形态迁移到 Web 服务，复用 100% 算法内核。
 
-> 合计 6 周；可视团队规模与人力增减。
+| 里程碑 | 范围 | 周期（估）|
+|---|---|---|
+| **M6** | 服务骨架 + 路径配置 + 扫描 + 瀑布流（无手势） | 4 周 |
+| **M7** | 图片查看器（手势、缩放、滑动）+ EXIF + 元数据 | 2 周 |
+| **M8** | 增量扫描 + watchdog + 周期重聚类 | 2 周 |
+| **M9** | 多目录聚合 + review UI + 合并/重命名 | 2 周 |
+| **M10** | 打包 + Docker + 部署文档 + Beta 招募 | 2 周 |
+| **M11** | v3.0 正式发布 | — |
 
-## 2. 任务分解（节选）
+总计 ~12 周。**前置**：M5（CLI + yunet-arcface）已发布 ✅。
 
-### M1 原型
-- [ ] T-001 仓库脚手架（`pyproject.toml`、lint、test、pre-commit、`uv` 锁定与 `uv venv` 环境）
-- [ ] T-002 CLI 骨架（Typer）+ 14 个子命令：`init / init-models / scan / index / cluster / link / run / report / review / review apply / gc / prune / rollback / rebuild`（与 03 §7 / 08 §6.5 一致）
-- [ ] T-003 配置加载（toml，含 schema 校验 pydantic）+ 错误码；**含 `[runtime] accept_noncommercial_model_license: bool = False` 字段（fail-safe 默认；详见 11 §3.2）**
-- [ ] T-004 扫描器 + content hash（xxh3_64）+ 增量 diff + JSON 进度事件
-- [ ] T-005 Model Pack 抽象：Detector/Embedder Protocol（v0.1 落 InsightFace 实现，路线 B 后抽象为 `pick_face.platform.pack`）
-- [ ] T-006 SQLite schema v0 + PRAGMA + 迁移框架 + WAL
-- [ ] T-007 HDBSCAN 聚类 + 簇质心二次合并 + 人工约束
-- [ ] T-008 软链接 / 回退（含 Windows junction 兜底）
-- [ ] T-009 report.md / report.html 生成（含 Warnings / 置信度直方图 / **顶部 Model+License 字段 (11 §3.4)**）
-- [ ] T-010 demo 数据集 + 验收脚本 + eval_report.json
-- [ ] T-011 退出码契约 + SIGINT/SIGTERM 处理 + staging 原子切换
-- [ ] T-012 pyproject extras 切分：`[heic]`、`[raw]`、`[gpu]`、`[gpu-cuda12]`、`[gpu-directml]`、`[dev]`、`[all]`（包管理统一 `uv`，详见 [03 §11](03-architecture-design.md#11-包管理设计)）
+## 1. M6 — 服务骨架 + 扫描 + 瀑布流
 
-### M2 增量与校正
-- [ ] T-101 增量模式（add/mod/del）+ 增量分配 (`Clusterer.incremental_assign`)
-- [ ] T-102 HEIC 解码（pillow-heif）
-- [ ] T-103 RAW thumbnail 优先 + rawpy 兜底
-- [ ] T-104 review 子命令（merge / split / remove / rename）+ `review_decision` 表
-- [ ] T-105 `low_confidence_faces.json` 输出
-- [ ] T-106 dry-run / rebuild / rollback 模式
-- [ ] T-107 Windows 链接回退与 warning 文档化
-- [ ] T-108 `meta.json` 与 `index.json` 镜像生成
+**目标**：能跑起来的最小 Web 服务，能看瀑布流。
 
-### M3 GPU 与性能
-- [ ] T-201 onnxruntime-gpu / DirectML / TensorRT 适配
-- [ ] T-202 进程级并行 + 进度条（`--progress json` + TUI 进度）
-- [ ] T-203 hnswlib 切换与持久化 + 崩溃重建路径
-- [ ] T-204 长任务断点续跑（基于 `face.id` 检查点）
-- [ ] T-205 10k 张基准 + 性能报告（CPU/GPU 各一份）
+### 1.1 子任务
 
-### M4 1.0
-- [ ] T-301 报告 HTML 化（含暗色模式、人物缩略图墙）
-- [ ] T-302 CI：lint + 单测 + 三平台 smoke + 公开基准评估 + **`tests/acceptance/test_no_model_in_distribution.py` (AC-9 守卫, 11 §3.5)**
-- [ ] T-303 文档站（mkdocs）+ README 重写 + 故障排查
-- [ ] T-304 PyPI 打包（`pyproject.toml` + `MANIFEST.in` + `uv build` + sdist/wheel 多平台 + `uv publish`）
-- [ ] T-305 发布 1.0 + 兼容性承诺
+| 任务 ID | 内容 | 依赖 |
+|---|---|---|
+| M6-T-1 | FastAPI app 骨架 + Uvicorn 启动 | — |
+| M6-T-2 | `service/config_service.py` 路径白名单 | — |
+| M6-T-3 | `api/config.py` CRUD + 表单 | M6-T-2 |
+| M6-T-4 | `service/scan_service.py` 启动扫描 | M6-T-2 |
+| M6-T-5 | `worker/scan_worker.py` 复用 v2.x ingest/* | M6-T-4 |
+| M6-T-6 | `api/scan.py` 进度 SSE | M6-T-4 |
+| M6-T-7 | `store/index.py` 增量扫描（基于 content_hash + mtime）| M6-T-5 |
+| M6-T-8 | `service/photo_service.py` 缩略图生成 | M6-T-5 |
+| M6-T-9 | `api/photos.py` 缩略图 + 原图流（HTTP Range） | M6-T-8 |
+| M6-T-10 | `api/persons.py` 虚拟相册 list | M6-T-7 |
+| M6-T-11 | SPA 骨架（Vite + React + TS + shadcn/ui + Tailwind 初始化） | — |
+| M6-T-11a | shadcn/ui 配置（`components.json`、`tailwind.config.ts`、CSS 变量、`<ThemeProvider>`） | M6-T-11 |
+| M6-T-11b | 引入基础 shadcn/ui 组件：`Button` `Card` `Input` `Dialog` `Toast` `Skeleton` `Tabs` `Switch` `Slider` `DropdownMenu` `Tooltip` `Badge` `Progress` `Sheet` `Command` | M6-T-11a |
+| M6-T-12 | SPA `/settings` 路径配置 UI（`Tabs` + `Dialog` + `Switch` + `react-hook-form` + `zod`） | M6-T-3 |
+| M6-T-13 | SPA `/persons` 瀑布流（react-photo-album + `Skeleton` 占位） | M6-T-10 |
+| M6-T-14 | SPA `/persons/:id` 单人瀑布流 + `Sheet` EXIF 抽屉 | M6-T-13 |
+| M6-T-15 | OpenAPI → TypeScript 自动生成 | M6-T-1 |
+| M6-T-16 | Docker 多阶段构建 | M6-T-1 |
 
-### M5 路线 B：Model Pack 插件架构（详见 docs/14 + docs/13）
+### 1.2 验收
 
-- [ ] T-501 ModelPack Protocol + `discover_packs()` entry-points loader
-- [ ] T-502 脱钩 core：`insightface` / `onnxruntime` 移出默认依赖
-- [ ] T-503 `yunet-mfn` pack 落地（默认 Apache-2.0，5 MB 模型）
-- [ ] T-504 `pick-face-modelpack-insightface` 独立包（保留 buffalo_l/sc/antelopev2 走 NC-research 路径）
-- [ ] T-505 LicenseClass 驱动 AC-9 gate 改造
-- [ ] T-506 Pi 3B 实测通过（400 张 PGM < 60 min，AC-1 ≥ 0.85）
-- [ ] T-507 文档更新（[10](10-model-stack.md) / [11](11-commercial-compliance.md) / [13 新](13-raspberry-pi-support.md) / [14 新](14-model-pack-plugins.md) / AGENTS / README）
-- [ ] T-508 CI 新增 `test_arm_friendly_default.py`（守默认 pack 回归）
-- [ ] T-509 `pick-face doctor` 子命令：列出已注册 pack + license + 状态
-- [ ] T-510 v2.0.0 发布：CHANGELOG 写迁移说明，老用户 `pip install pick-face-modelpack-insightface` 保留原行为
+- AC-W1：路径白名单 ✅
+- AC-W2：扫描 1000 张图，进度可见 ✅
+- AC-W3：检测 + 嵌入 ✅
+- AC-W5：`/persons` 列出 ≥ 10 个虚拟相册 ✅
+- AC-W7：原图流式 ✅
 
-## 3. 测试策略
+## 2. M7 — 图片查看器
 
-| 层级 | 内容 | 工具 |
-|------|------|------|
-| 单元 | 配置、扫描器、链接器、SQLite schema 迁移、约束注入、xxh3 哈希、staging rename | `pytest` |
-| 集成 | detect/embed/cluster/link 端到端，使用 50–200 张合成数据 + mock 推理后端（`MockDetector`） | `pytest` + 内存 ONNX |
-| 验收 | 真实人脸 fixture（见 §3.3）跑出 `report.md` 与 `eval_report.json`；AC-1 软阈值由 `tests/integration/test_real_faces_ac1.py` 守护 | `tests/acceptance/run_eval.py` |
-| 平台 | GitHub Actions matrix：ubuntu-latest / macos-latest / windows-latest | `ci.yml` |
-| 性能 | benchmark 脚本，附 10k 张基准图（合成） + CPU/GPU 两份报告 | `bench/run.py` |
+**目标**：完整的桌面 + 移动端相册体验。
 
-测试覆盖率门槛：核心模块 ≥ 80%，CLI ≥ 50%（GUI/TUI 之后再说）。
+### 2.1 子任务
 
-### 3.1 关键 fixture
+| 任务 ID | 内容 | 依赖 |
+|---|---|---|
+| M7-T-1 | `<FaceViewer>` 组件：键盘 ←/→/Space | M6-T-14 |
+| M7-T-2 | `<FaceViewer>` 鼠标滚轮缩放 + 双击 100%↔fit | M7-T-1 |
+| M7-T-3 | `<FaceViewer>` 拖动 pan | M7-T-2 |
+| M7-T-4 | `<FaceViewer>` 全屏切换（F / Esc） | M7-T-2 |
+| M7-T-5 | `@use-gesture/react` 触摸手势（pinch、swipe、tap） | M7-T-2 |
+| M7-T-6 | `<FaceOverlay>` 在图上画 bbox | M7-T-1 |
+| M7-T-7 | `api/photos/{id}/metadata` EXIF + 路径 | — |
+| M7-T-8 | 信息层抽屉（EXIF、文件名、原图路径）| M7-T-7 |
+| M7-T-9 | PWA manifest + service worker | M7-T-1 |
+| M7-T-10 | 浏览器 E2E 测试（Playwright） | M7-T-1 |
+| M7-T-11 | `Toast` (sonner) 错误反馈统一封装 | M6-T-11b |
+| M7-T-12 | 全局 `Command` (cmdk) 搜索（按人名 / 路径 / EXIF） | M6-T-11b |
+| M7-T-13 | `Badge` 标注 NC-research 模型包警告 | M6-T-11b |
 
-- `tests/fixtures/synth_faces/`: 用合成人脸图（小图 + 噪声）跑扫描/聚类，单测无需真模型。
-- `tests/fixtures/mock_insightface.py`: 实现 `FaceDetector`/`FaceEmbedder` Protocol，生成确定性的伪 embedding（基于图像内容的 hash），用于 CI smoke。
-- `tests/fixtures/real_faces/`: 真实人脸测试集（见 §3.3），**不进 git**，由 `scripts/fetch_face_dataset.py` 按需拉取。
-- `tests/fixtures/mock_pack/`: 实现一个 mock `ModelPack`（LicenseClass.PERMISSIVE），用于测试 `discover_packs()` / `require_compliance()` 逻辑（[14 §3](14-model-pack-plugins.md)），不依赖任何真模型。
+### 2.2 验收
 
-### 3.2 CI 缓存
+- AC-W6：上一张 / 下一张 / 缩放 / 拖动 ✅
+- 移动端手势（pinch、swipe、tap）✅
 
-- 缓存 `~/.insightface/models/` 与 `~/.cache/uv`（如用 uv）。
-- 公开基准数据集走 `actions/cache` + `pytest-benchmark` 增量比对。
+## 3. M8 — 增量扫描 + watchdog + 周期重聚类
 
-### 3.3 真实人脸测试集（T-307）
+**目标**：新加图片自动出现在相册。
 
-为 AC-1 验收准备一个**真实人脸** fixture；不放进 git，按需拉取。
+### 3.1 子任务
 
-```
-# 一次性准备（要求可访问 cl.cam.ac.uk 或 figshare）
-uv run python scripts/fetch_face_dataset.py
+| 任务 ID | 内容 | 依赖 |
+|---|---|---|
+| M8-T-1 | `service/file_watcher.py` watchdog → asyncio.Queue | M6-T-5 |
+| M8-T-2 | APScheduler 周期轮询兜底（每 5 分钟） | M8-T-1 |
+| M8-T-3 | `worker/cluster_worker.py` 周期重聚类 | M6-T-10 |
+| M8-T-4 | `worker/cluster_worker.py` 增量触发（≥ N 张脸） | M8-T-3 |
+| M8-T-5 | HNSW 增量添加 + 持久化频率 | M6-T-7 |
+| M8-T-6 | 软删除（`photos.deleted = 1`）| M6-T-7 |
+| M8-T-7 | `api/health` 队列深度 + worker 状态 | M6-T-1 |
+| M8-T-8 | SSE 增量事件（new_photo / new_person / merged） | M7-T-1 |
 
-# 跑真实端到端
-uv run pytest tests/integration/ -v -m real_data
+### 3.2 验收
 
-# 默认 fixture：40 人 × 10 张 = 400 张 PGM（92×112 灰度） / ~4.5MB compressed
-# 来源 1：https://www.cl.cam.ac.uk/research/dtg/attarchive/pub/data/att_faces.tar.Z
-# 来源 2：https://ndownloader.figshare.com/files/5976027  (sklearn 用的镜像)
-# License：CC-BY 4.0（仅需 attribution，无 source-disclosure 义务）
-# Attribution：AT&T Laboratories Cambridge (formerly Olivetti Research Laboratory)
-```
+- AC-W8：新增一张图，30 秒内出现在聚类结果 ✅
 
-数据集选型理由（在所有备选中唯一同时满足六项约束的）：
+## 4. M9 — 多目录聚合 + Review UI
 
-| 备选 | License | 体量 | 裁剪度 | 人数 | 抓取 | 类内差异 |
-|------|---------|------|--------|------|------|----------|
-| **AT&T/ORL/Olivetti** | CC-BY 4.0 ✓ | 4.5MB ✓ | 已裁 ✓ | 40 ✓ | 2 个镜像 ✓ | 表情/眼镜/姿态 ✓ |
-| 5-Celebrity-Faces | 不清 ✗ | 5MB | 已裁 | 5 | HF | 弱 |
-| LFW | CC-BY 4.0（但 700MB）| 过大 | 仅人脸框 | 5k+ | 多源 | 一般 |
-| Yale Face | 学术使用声明 | 1MB | 已裁 | 15 | 单源 | 一般 |
-| Caltech Faces 1999 | 不允许再分发 | 1MB | 已裁 | 27 | 无公开链接 | 一般 |
+**目标**：跨目录同人合并 + review UI。
 
-约束：
+### 4.1 子任务
 
-- 图集**不**进 git、`pyproject.toml` 也不打包；CI 默认跳过（`pytest -m "not real_data"`）。
-- 集成测试加 `@pytest.mark.real_data`，由 `tests/integration/conftest.py` 在 `manifest.json` 缺失时自动 `pytest.skip()`。
-- AC-1 阈值先按 **软阈值**（precision ≥ 0.80 / recall ≥ 0.60 / B³ F1 ≥ 0.70）落地，避免小 fixture 抖动触发 CI 红；换上更大图集后再向合同阈值（0.95 / 0.85 / 0.90）收紧。
-- fixture 目录内自带 `NOTICE` 文件（CC-BY 4.0 attribution），与 pick-face 的 Apache-2.0 NOTICE 兼容（Apache §4(d) 显式保留 NOTICE 文本）。
+| 任务 ID | 内容 | 依赖 |
+|---|---|---|
+| M9-T-1 | HDBSCAN 全局聚类（跨 scan_paths） | M8-T-3 |
+| M9-T-2 | `api/persons/merge` 端点 | M6-T-10 |
+| M9-T-3 | `api/persons/{id}` 重命名 | M6-T-10 |
+| M9-T-4 | SPA `<ReviewPanel>` 合并 / 重命名 UI（`Dialog` + `DropdownMenu` + `Slider` 调阈值预览） | M9-T-2 |
+| M9-T-5 | SPA `/review/pending` 待审聚类 | M9-T-1 |
+| M9-T-6 | 跨目录 fixture（AT&T 拆 2 目录）| — |
+| M9-T-7 | 跨目录聚类 F1 不降的回归测试 | M9-T-6 |
 
-## 4. 文档矩阵
+### 4.3 验收
 
-- README：5 分钟 quickstart
-- docs/01–07：本文档体系
-- models.md：模型下载与离线安装指引
-- troubleshooting.md：Windows 软链接、HEIC 缺失等常见问题
+- AC-W9：跨目录同人合并，B³ F1 不降 ✅
 
-## 5. 发布策略
+## 5. M10 — 打包 + Docker + 部署文档
 
-- 语义化版本：`0.y.z` 阶段允许小重构；进入 `1.x` 后仅修 bug 与新特性。
-- 变更日志：`CHANGELOG.md`（Keep a Changelog 风格）。
-- 兼容性：CLI 命令、SQLite schema、输出目录布局在 `1.x` 内保持稳定。
+**目标**：用户能 `docker run` 起来。
 
-## 6. 团队分工（建议）
+### 5.1 子任务
 
-| 角色 | 占比 | 职责 |
-|------|------|------|
-| 算法 | 30% | 模型集成、聚类调参、评测 |
-| 后端 | 40% | 流水线、CLI、SQLite、链接 |
-| 平台/工具 | 20% | 跨平台 CI、打包、文档 |
-| 产品/测试 | 10% | 验收数据集、文档评审 |
+| 任务 ID | 内容 | 依赖 |
+|---|---|---|
+| M10-T-1 | Dockerfile 多阶段 | M6-T-16 |
+| M10-T-2 | docker-compose.yml（含 volume mount） | M10-T-1 |
+| M10-T-3 | 部署文档（`docs/deployment/`） | M10-T-2 |
+| M10-T-4 | Caddy / nginx 反代配置示例 | M10-T-2 |
+| M10-T-5 | system service 文件（Linux 裸机部署） | M6-T-1 |
+| M10-T-6 | Windows 服务脚本 | M6-T-1 |
+| M10-T-7 | 资源占用基线测试（CPU/RAM/磁盘） | M10-T-1 |
+| M10-T-8 | 启动时间基线（首次 vs 增量） | M10-T-1 |
+| M10-T-9 | Beta 用户招募（5–10 人） | — |
 
-## 7. 依赖与 CI
+### 5.2 验收
 
-### 7.1 Python 与包管理
+- Docker 镜像 < 800 MB
+- 启动时间（增量）< 3 秒
+- 100k 张照片 CPU 扫描 < 75 分钟 / GPU < 12 分钟
 
-- Python：3.10 / 3.11 / 3.12（CI 矩阵覆盖）。
-- 包管理：**统一使用 `uv`**（依赖解析 / lockfile / venv / 安装 / 发布），详见 [03 §11](03-architecture-design.md#11-包管理设计)。
-- 锁定：所有依赖在 `pyproject.toml` 中给约束区间；**生产构建**额外维护 `requirements.lock`（`uv pip compile` 生成，提交到仓），CI 与发布统一用 lockfile。
-- 关键三方库（写明大致版本下限，到 v0.1 时按 ABI/CUDA 兼容性细化）：
-  - **核心**：`numpy>=1.24`、`Pillow>=10.0`、`opencv-python>=4.9`、`typer>=0.12`、`rich>=13`、`pydantic>=2.6`、`xxhash>=3.4`、`hnswlib>=0.7`、`hdbscan>=0.8.33`、`onnxruntime>=1.17`（路线 B 后**只**装 onnxruntime，不强依赖 insightface）
-  - **Model Pack**（每个 pack 自带依赖，不进核心）：`yunet-mfn` → `onnxruntime + opencv-python`；`pick-face-modelpack-insightface` → `insightface + onnxruntime-gpu (可选)`
-  - **可选 extras**：`pillow-heif>=0.16`（heic）、`rawpy>=0.18`（raw）、`onnxruntime-gpu>=1.17`（gpu）、`onnxruntime-directml>=1.17`（gpu-directml）
-  - **dev**：`pytest>=8`、`pytest-cov`、`pytest-benchmark`、`ruff>=0.6`、`mypy>=1.10`、`pre-commit>=3.8`、`pip-audit>=2.7`、`types-Pillow`
+## 6. M11 — v3.0 正式发布
 
-### 7.2 extras 切分（与 [03 §11.2](03-architecture-design.md#11-包管理设计) 一致）
+### 6.1 子任务
 
-- `pick-face[heic]`：HEIC 解码（`pillow-heif`）。
-- `pick-face[raw]`：RAW 解码（`rawpy`）。
-- `pick-face[gpu]`：`onnxruntime-gpu`。
-- `pick-face[gpu-cuda12]`：`onnxruntime-gpu>=1.17,<1.18` + 文档 `cuda==12.x` 校验。
-- `pick-face[gpu-directml]`：`onnxruntime-directml`（Windows 无 NVIDIA）。
-- `pick-face[dev]`：lint / test / pre-commit。
-- `pick-face[all]`：除 `[gpu*]` 系列外的所有可选（GPU 仍按硬件手动选）。
+| 任务 ID | 内容 | 依赖 |
+|---|---|---|
+| M11-T-1 | 全量回归测试（unit + integration） | M10-T-9 |
+| M11-T-2 | 性能调优（如果 M10-T-7 不达标） | M11-T-1 |
+| M11-T-3 | CHANGELOG [3.0.0] 段 | — |
+| M11-T-4 | GitHub Release + 二进制包 | M11-T-3 |
+| M11-T-5 | 文档站（mkdocs）发布 | M11-T-3 |
 
-### 7.3 CI（GitHub Actions）
+## 7. 跨里程碑风险
 
-- 矩阵：`ubuntu-latest` × `python {3.10, 3.11, 3.12}`；`macos-latest` × `python 3.12`；`windows-latest` × `python 3.12`。
-- Job：`lint`（ruff/black/mypy）、`unit`（pytest + 覆盖率）、`smoke`（mock 后端跑通），`eval`（仅 ubuntu + GPU runner 可选跑 LFW/CALFW/CPLFW 公开基准）。
-- 缓存：`~/.insightface/models/`、`~/.cache/uv`。
-- 发布：`uv build` + `uv publish`；tag 触发；签名 + 校验和（详见 [03 §11.6](03-architecture-design.md#11-包管理设计)）。
+| 风险 | 触发 | 缓解 |
+|---|---|---|
+| watchdog 在某些文件系统（Docker bind mount）失效 | M8 | 周期轮询兜底 |
+| FastAPI 单进程无法吃满 CPU | M6 | `workers` 配置；v4 用 gunicorn + uvicorn workers |
+| 大目录（> 1M 张图）一次性扫描 OOM | M6 | 流式 + 批量提交 SQLite |
+| HTTP Range 在 nginx 反代下丢失 | M10 | 文档示例 + 配置检查 |
+| 前端包体积过大 | M7 | Vite tree-shaking + code-splitting |
 
-### 7.4 模型与离线
+## 8. v4+ 路线图（非 v3 范围）
 
-- `pick-face init-models` 路线 B 后**必须指定 `--pack <pack_id>`**；走 pack 的 `download_to()` 拉权重
-- 默认 `pack = yunet-mfn` → 走 OpenCV Zoo GitHub release，5 MB
-- opt-in 装 `pick-face-modelpack-insightface` 后可用 `buffalo_l` / `buffalo_sc` / `antelopev2`
-- 完全离线：在 `model_dir/<pack_id>/` 预放 ONNX 文件，CLI 跳过下载
-- 离线安装文档：在 `docs/troubleshooting.md` 给出「下载 `.zip` → 解压到 `model_dir/<pack_id>/`」步骤
-- 详见 [10 §7](10-model-stack.md) + [13 §3 Pi 完整安装](13-raspberry-pi-support.md) + [14 §4 发布](14-model-pack-plugins.md)
+| 主题 | 描述 |
+|---|---|
+| 多用户 / 多租户 | v3 schema 已预留 user_id 字段 |
+| 视频抽帧 | ffmpeg + 关键帧检测 |
+| 关系图谱 | 同一图多人 → "社交图" |
+| 移动端原生 App | Capacitor / Tauri 包装 SPA |
+| 智能标签 | 场景 / 物体识别 |
+| 远程后端 | S3 / SMB 扫描源 |
+| GPU 集群 | 多 worker 时跨机器 distribute |
+
+## 9. 引用与延伸阅读
+
+- [01 PRD](01-product-requirement.md)
+- [02 §栈选型](02-technical-pre-research.md)
+- [03 §服务架构](03-architecture-design.md)
+- [04 §聚类流水线](04-algorithm-pipeline.md)
+- [05 §数据与存储](05-data-and-storage.md)
+- 归档：[M5 CLI §里程碑](archive/m5-cli/06-engineering-plan.md) — 历史

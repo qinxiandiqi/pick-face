@@ -1,162 +1,268 @@
-# 02 技术预研报告
+# 02 技术预研：栈选型与库对比（v3.0）
 
-> 文档版本：v0.1（预研稿） · 2026-07-30 · 状态：**待评审**
+> 文档版本：v3.0 · 2026-08-12
+> 范围：Web 相册服务的栈选型、对比矩阵、决策
+> 关联：[01 PRD](01-product-requirement.md) · [03 架构](03-architecture-design.md)
 
-## 1. 调研范围与方法
+## 0. 摘要
 
-- **目标**：为「本地离线按人脸整理图片」挑选成熟、可维护、合规的 Python 技术栈；明确关键算法参数与风险。
-- **方法**：对比主流人脸识别/聚类库的当前状态、许可证、性能与生态；参考公开 benchmark（InsightFace 官方报告、face_recognition 文档、HDBSCAN/AGNES 论文与社区实践）。
-- **结论属性**：建议性结论，不绑定到具体实现细节；待 v0.1 原型验证后定稿。
+v3 在 v2.x 算法内核（已稳定）之上加一层 **Web 服务** + **SPA**。核心选型：
 
-## 2. 候选技术栈对比
+| 维度 | 选型 | 替代 | 决策依据 |
+|---|---|---|---|
+| **HTTP 框架** | FastAPI | Flask / Django / Starlette | 异步 / 自动 OpenAPI / Pydantic 类型 |
+| **ASGI 服务器** | Uvicorn | Hypercorn | FastAPI 官方推荐 |
+| **后台任务队列** | APScheduler + asyncio.Queue | Celery / RQ / Dramatiq | 单机部署无需 Redis；进程内即可 |
+| **数据库** | SQLite (WAL 模式) | Postgres / DuckDB | 单用户自托管；WAL 足够 100k 张图 |
+| **向量索引** | hnswlib | FAISS / Qdrant / Milvus | 已在 v2.x 用；持久化 + 增量添加 |
+| **文件监听** | watchdog (跨平台) | inotify (Linux-only) / 周期轮询 | watchdog 封装 inotify/FSEvents/Windows |
+| **缩略图** | Pillow + libvips (可选) | ImageMagick | Pillow 已依赖；libvips 仅在性能瓶颈时 |
+| **原图流式返回** | FastAPI FileResponse + Range | 自实现 | Starlette 自带 Range 支持 |
+| **前端框架** | React + Vite + TypeScript | Vue 3 / Svelte / Solid | 生态 / 查看器组件丰富 |
+| **UI 组件库** | **shadcn/ui**（基于 Radix UI + Tailwind）| MUI / Chakra / Ant Design | 可复制可定制、零运行时、Radix 无障碍 |
+| **样式系统** | Tailwind CSS v3 | MUI / Chakra | shadcn/ui 的依赖；utility-first 与查看器状态联动直接 |
+| **图标** | lucide-react | heroicons / @radix-ui/react-icons | shadcn/ui 默认配套 |
+| **表单** | react-hook-form + zod | Formik | 与 shadcn/ui 表单示例一致；zod 与 Pydantic 类型互译 |
+| **查看器组件** | react-photo-album + 自研手势 | PhotoSwipe / react-image-lightbox | 灵活度；手势可控 |
+| **状态管理** | TanStack Query + Zustand | Redux / Jotai | 服务端状态 + 少量本地状态 |
+| **实时通信** | SSE (Server-Sent Events) | WebSocket / 轮询 | 扫描进度单向推送，SSE 最简 |
+| **包管理器** | uv | pip-tools / poetry | 已确立（项目约束） |
+| **Python 版本** | 3.10–3.12 | 3.13 | 与 v2.x 一致 |
+| **打包** | Docker (multi-stage) + 裸机 | 仅 Docker | 两种部署都要 |
 
-### 2.1 人脸检测 + 嵌入（主任务）
+## 1. HTTP 框架对比
 
-| 方案 | 维护/活跃 | 许可证 | 嵌入维度 | 备注 | 结论 |
-|------|---------|-------|---------|------|------|
-| **InsightFace (buffalo_l/sc) + ONNX Runtime** | deepinsight/insightface 持续更新；2024–2026 仍在出新权重 | 代码 **MIT**；预训练模型 **非商业研究用途** | 512 | SCRFD 检测 + ArcFace(w600k_r50)；LFW 99.78%+ | **MVP 推荐**：可自托管 ONNX、CPU 默认、可换 EP |
-| **DeepFace (serengil)** | 活跃，本质是多后端 wrapper | MIT（注意各 backend 自带许可） | 视 backend | 经常自动下载模型；与 InsightFace 共用同一 backend 时能力等价 | 备选 / 用于多模型实验 |
-| **face_recognition (dlib)** | 长期低活跃；Py 3.11/3.12 缺 wheel，需自编译 | MIT / Boost(BSD) | 128 | dlib 编译链在 Windows / Apple Silicon / Linux 频繁踩坑；LFW 99.38% | 不推荐 |
-| **OpenCV DNN + 自拼 FaceNet/ONNX** | OpenCV 活跃 | Apache-2.0 | 自定 | 工程量大 | 仅作学习/极端定制 |
-| **MediaPipe Face Mesh** | Google 活跃 | Apache-2.0 | 468 关键点 | 偏关键点；无识别嵌入 | 不适用（可作检测兜底） |
+### 1.1 候选
 
-**判断依据**：
-- 离线/隐私要求：InsightFace 允许自托管 ONNX 模型 + 本地缓存 (`~/.insightface/models/` 或 `INSIGHTFACE_HOME`)，首启后完全可控。
-- 准确率：InsightFace 在 IJB-C / MegaFace 等公开榜单长期领先（多份复现与官方报告一致）。
-- 跨平台：ONNX Runtime 提供 CPU/CUDA/DirectML/TensorRT/ROCm EP；Windows 无 NVIDIA 可走 DirectML，macOS/Apple Silicon 走 CPU EP。
-- 可替换性：抽象 `FaceDetector` / `FaceEmbedder` 接口，未来切换到 w600k_r100、新 MobileFaceNet、AdaFace 等成本低。
-- 风险与缓解：buffalo_l 模型许可非商用 → 文档/UI 中明示来源；若后续要商用，预留替换为自训/商权模型的路径。
+| 框架 | 异步 | 类型提示 | OpenAPI 自动生成 | 生态 |
+|---|---|---|---|---|
+| **FastAPI** | ✅ | ✅ Pydantic | ✅ | 大；与 Starlette 100% 兼容 |
+| Flask | ❌（默认同步） | 手动 | ❌（要 flask-smorest） | 最大 |
+| Django | ❌（默认同步；ASGI 模式可用） | 手动 | ❌（drf-spectacular） | 最大；但重 |
+| Starlette | ✅ | ✅ | ❌（要自己装 OpenAPI） | 中 |
 
-来源：InsightFace python-package README、ONNX Runtime Execution Providers、Microsoft Learn Windows ML。完整 URL 见文末「参考资料」一节。
+### 1.2 决策：**FastAPI**
 
-#### InsightFace 推荐调用形态
+理由：
+1. **异步优先** — `/api/scan/start` 是长任务，HTTP 异步让 worker 不阻塞主线程
+2. **OpenAPI 自动** — 前端可以直接 `npm run gen-api` 从 OpenAPI 生成 TypeScript client
+3. **Pydantic v2** — 数据校验 / 序列化已在 v2.x core 用过（`PickFaceConfig`），复用心智
+4. **依赖注入** — `Depends(get_db)`、`Depends(get_runner)` 让测试友好
 
-```python
-from insightface.app import FaceAnalysis
-app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
-app.prepare(ctx_id=0, det_size=(640, 640))
-faces = app.get(cv2_image)  # bbox, kps, normed_embedding (512d), det_score
+## 2. 数据库对比
+
+### 1.1 候选
+
+| 数据库 | 单机写 | 读并发 | 部署复杂度 | 适合规模 |
+|---|---|---|---|---|
+| **SQLite (WAL)** | ~100k/s | 高 | 零（一个文件） | 100k 张图内 |
+| PostgreSQL | 高 | 极高 | 中（要起服务） | 100k+ |
+| DuckDB | 极高（OLAP） | 高 | 零（嵌入式） | 1M+ 但写弱 |
+
+### 2.2 决策：**SQLite（WAL 模式）**
+
+理由：
+1. 单用户自托管场景，**无并发写**
+2. v2.x 已用 SQLite（`store/index.py`），零迁移成本
+3. WAL 模式允许一边扫描一边 HTTP 查询不阻塞
+4. 备份 = `cp .pick-face/index.sqlite` 即可
+
+**多用户场景留给 v4**：v3 文档明确不做多租户；万一用户需要，**只换数据库驱动**，业务层不动（`store/*.py` 已经 Pydantic 化）。
+
+## 3. 后台任务队列对比
+
+### 3.1 候选
+
+| 方案 | 需要外部依赖 | 适合规模 | 复杂度 |
+|---|---|---|---|
+| **asyncio.Queue + 后台 task** | 否 | 单进程 | 低 |
+| APScheduler | 否 | 单进程定时任务 | 低 |
+| Celery | Redis/RabbitMQ | 分布式 | 高 |
+| RQ | Redis | 分布式 | 中 |
+| Dramatiq | Redis/RabbitMQ | 分布式 | 中 |
+
+### 3.2 决策：**asyncio.Queue + APScheduler**
+
+理由：
+1. 单机部署，**无需 Redis**
+2. FastAPI 的 `@app.on_event("startup")` 起 N 个 worker，监听同一 asyncio.Queue
+3. APScheduler 负责**周期任务**（每 5 分钟扫一次新文件）+ **延迟任务**（UI 点"立即扫描"）
+4. 进度通过 **SSE**（`GET /api/scan/progress`）推给浏览器
+
+## 4. 文件监听对比
+
+### 4.1 候选
+
+| 方案 | 平台 | 实时性 | 复杂度 |
+|---|---|---|---|
+| **watchdog** | 跨平台（inotify/FSEvents/Windows） | 实时 | 中 |
+| 周期轮询（`os.scandir` 每 N 秒） | 跨平台 | N 秒延迟 | 低 |
+| Linux inotify 直接调用 | Linux-only | 实时 | 中 |
+
+### 4.2 决策：**watchdog + 周期轮询兜底**
+
+理由：
+1. watchdog 是事实标准，跨平台一致
+2. 周期轮询作为**兜底**：watchdog 失败 / 文件系统不支持 inotify 时仍能跑
+3. watchdog 事件进入 asyncio.Queue，worker 异步消费
+
+## 5. 向量索引
+
+### 5.1 决策：**复用 v2.x 的 hnswlib**
+
+理由：
+1. v2.x 已经验证 100k 张脸的性能（query < 5ms / p99）
+2. 持久化文件 `index.bin` 直接复用
+3. 不引入新依赖
+
+**规模天花板**：hnswlib 单机能撑 ~10M 向量（@32-D），远超单用户场景。
+
+## 6. 前端栈
+
+### 6.1 React vs Vue vs Svelte
+
+| 框架 | 体积 | 学习曲线 | 查看器组件 |
+|---|---|---|---|
+| **React** | 中 | 中 | 最多（react-photo-album、photoswipe-react 等） |
+| Vue 3 | 小 | 平缓 | 中 |
+| Svelte 5 | 最小 | 平缓 | 少 |
+
+**决策：React + Vite + TypeScript + shadcn/ui + Tailwind CSS**
+- React + Vite + TS：生态最广；OpenAPI → TypeScript 自动生成（`openapi-typescript`）
+- **shadcn/ui**：Radix UI 提供无障碍 + 行为正确（Dialog / DropdownMenu / Toast / Tabs 都已做好 WAI-ARIA），Tailwind 提供可定制的 token 体系。**不是 npm 依赖**——`npx shadcn@latest add button` 把组件源代码复制进 `src/web/components/ui/`，可以随手改样式、改逻辑、改 props，不会被依赖锁死
+- 查看器组件可自研手势层（pinch / swipe），复用 react-photo-album 的瀑布流
+
+**为什么不用 MUI / Chakra**
+- MUI：Material Design 强风格，与"自托管相册"调性不合；runtime CSS-in-JS 增加 bundle
+- Chakra：API 好但组件体积大；自定义主题要走 token；不如 shadcn/ui 的"复制即拥有"
+- Ant Design：偏后台管理风格，相册 UI 太重
+
+**为什么不用纯 Radix 不带 shadcn/ui**
+- Radix 本身只暴露无样式行为原语，每个组件都要从零写 Tailwind class；shadcn/ui 已经把这些写好的 class 模板随源码复制给你，省事但不失控制
+
+### 6.1.5 主题与暗色模式
+
+shadcn/ui + Tailwind 内建暗色模式支持，通过 `darkMode: 'class'` 切换。v3 默认跟随系统 `prefers-color-scheme`，UI 上提供手动切换（Radix DropdownMenu）。颜色 token 全部走 CSS 变量（`--background` / `--foreground` / `--primary` 等），方便后期白标/换肤。
+
+### 6.2 查看器交互设计
+
+参考 Apple Photos / Google Photos / Immich：
+
+- 桌面：← / → / Space、滚轮缩放、双击切换 100%↔适应屏幕
+- 移动：tap 切 UI、单指 swipe 切图、双指 pinch 缩放、双击放大
+- 全屏：F 键切换；Esc 退出
+- 信息层：右下角抽屉显示 EXIF / 原图路径 / 该人所有位置
+
+### 6.3 实现选择：**自研 React 查看器 + shadcn/ui 基础组件**
+
+- `react-photo-album` 处理瀑布流布局（缩略图网格）
+- 自研 `<FaceViewer>` 组件处理查看器
+  - 用 `useGesture`（@use-gesture/react）处理手势
+  - 用 `framer-motion` 做平滑过渡
+- shadcn/ui 提供的 `<Button>` `<Dialog>` `<DropdownMenu>` `<Tabs>` `<Toast>` `<Slider>` 直接用于：路径配置弹窗、模型包切换菜单、扫描进度 Toast、缩放 Slider 等
+- 复用 v2.x 的 `output/mirrors.py` 路径映射逻辑
+
+## 7. 实时通信
+
+### 7.1 SSE vs WebSocket vs Polling
+
+| 方案 | 适合 | 复杂度 |
+|---|---|---|
+| **SSE** | 服务端单向推（扫描进度） | 低 |
+| WebSocket | 双向 | 高 |
+| 轮询 | 简单状态查询 | 中 |
+
+**决策：SSE**
+- 扫描进度是**单向推**（服务端 → 浏览器）
+- SSE 用 `EventSource` API 浏览器原生支持
+- FastAPI `StreamingResponse` 直接生成 SSE 流
+
+## 8. 缩略图生成
+
+### 8.1 候选
+
+| 方案 | 速度 | 质量 | 依赖 |
+|---|---|---|---|
+| **Pillow** | 中 | 好 | 已依赖 |
+| libvips (pyvips) | 快 5-10× | 极好 | 系统包；多阶段 Docker |
+| ImageMagick | 中 | 好 | 系统包 |
+
+### 8.2 决策：**Pillow 优先，libvips 可选**
+
+理由：
+1. v3 首版用 Pillow，零新依赖
+2. 缩略图生成在 worker（异步），性能可接受
+3. 如果用户报告"扫 1 万张要 10 分钟"，再加 libvips
+
+## 9. 部署形态
+
+### 9.1 Docker（推荐）
+
+```dockerfile
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y libgl1 libglib2.0-0
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+COPY src ./src
+EXPOSE 8000
+CMD ["uv", "run", "pick-face-web", "serve", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-- `normed_embedding` 已 L2 归一化，**直接用 cosine**。
-- `det_size=(640,640)` 召回高；`(320,320)` 更快但漏小脸。
-- 极小图/合影：`det_score` 阈值起步 0.5–0.6。
+### 9.2 裸机
 
-### 2.2 聚类（未知人数）
+```bash
+uv venv
+uv pip install -e ".[web]"
+pick-face-web serve --host 0.0.0.0 --port 8000
+```
 
-| 算法 | 复杂度 | 关键参数 | 优点 | 缺点 | 结论 |
-|------|-------|---------|------|------|------|
-| **HDBSCAN** | O(n log n) | `min_cluster_size`, `min_samples`, `cluster_selection_epsilon` | 无需指定 k；对噪声鲁棒；自动选阈值 | sklearn 实现较慢，需 `hdbscan` 原生包；初始距离矩阵大 | **推荐** |
-| **Agglomerative（ChineseWhispers / 凝聚）** | O(n²) | 距离阈值 | 可解释；常用于人脸聚类 | OOM 风险大；阈值需手工调 | 备选（数据量 < 5k 适用） |
-| **DBSCAN** | O(n log n) | `eps`, `min_samples` | 简单 | `eps` 难调；变密度下表现差 | 不推荐单独使用 |
-| **谱聚类** | O(n³) | k | 几何直观 | 必须给 k；大 n 不可行 | 不推荐 |
-| **k-NN 图 + 联通分量** | O(n log n) | k | 极快；适合大规模 | 需要良好向量 | 可作 HDBSCAN 的快速近似 |
+### 9.3 单进程 vs worker 进程
 
-**判断依据**：
-- 1000–50000 张图规模下，HDBSCAN 在 CPU 上 1–3 分钟可完成。
-- 距离度量建议使用余弦距离（在 InsightFace 嵌入上效果稳定）。
+**v3 决策：单进程 + 异步任务**
+- FastAPI 单进程内起 N 个 worker task（默认 N=2，可配）
+- 扫描 / 索引 / 聚类 都在同一 asyncio 事件循环
+- 监控：`/api/health` 返回 worker 状态
 
-### 2.3 存储与缓存
+**v4 多机扩展**：如需分布式，把 asyncio.Queue 换成 Redis Stream，业务层不动。
 
-| 候选 | 用途 | 选择 |
-|------|------|------|
-| SQLite | 索引库/元数据 | **推荐**（无服务、易分发、足够支撑百万级脸） |
-| FAISS / Annoy / hnswlib | 近似最近邻加速 | **推荐** hnswlib（纯 C++ 绑定，轻量，跨平台） |
-| LMDB / LevelDB | 大规模嵌入缓存 | 可选（>100 万脸时考虑） |
-| 文件系统 + JSON | 轻量元数据 | 仅用于小规模或调试 |
+## 10. 库版本约束（pyproject.toml 草案）
 
-### 2.4 图像解码
+```toml
+[project]
+dependencies = [
+    # ... v2.x 全部
+    "fastapi>=0.110,<1",
+    "uvicorn[standard]>=0.27,<1",
+    "python-multipart>=0.0.9",     # file upload
+    "watchdog>=4,<7",              # file system events
+    "apscheduler>=3.10,<4",        # periodic scans
+    "pyvips>=2.2,<3 ; sys_platform != 'win32'",  # optional fast thumbs
+]
+```
 
-| 格式 | 推荐 | 备注 |
-|------|------|------|
-| JPEG/PNG/WebP | Pillow 或 OpenCV | Pillow 易用；OpenCV 解码更快 |
-| HEIC | pillow-heif 或 imagecodecs | Windows/Linux 需装 libheif |
-| TIFF | tifffile 或 Pillow | Pillow 对多页 TIFF 支持有限 |
-| RAW (CR2/NEF/ARW) | rawpy | 体积大、依赖 libraw；v1 不强制 |
-| GIF | Pillow（取首帧） | 动态人脸不在 v1 范围 |
+[project.optional-dependencies]
+web = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "watchdog>=4,<7", "apscheduler>=3.10,<4"]
+web-frontend = ["pnpm>=8"]  # 仅开发者本地用
+docker = ["gunicorn>=21"]  # 反向代理用
 
-### 2.5 软链接回退策略
+## 11. 决策汇总
 
-> 单一权威在 [05-data-and-storage.md §4](05-data-and-storage.md)；本节给结论性引述。
+| 决策 | 选型 | 推翻成本 |
+|---|---|---|
+| Web 框架 | FastAPI | 低（业务在 service 层） |
+| DB | SQLite WAL | 低（业务在 store 层） |
+| 后台任务 | asyncio.Queue + APScheduler | 低 |
+| 文件监听 | watchdog | 低 |
+| 前端 | React + Vite + TypeScript + shadcn/ui + Tailwind | 中（要重写组件） |
+| 查看器 | 自研 React + @use-gesture + framer-motion | 中 |
+| 实时通信 | SSE | 低 |
+| 部署 | Docker + 裸机都支持 | 极低 |
 
-| 平台 | 首选 | 回退顺序 |
-|------|------|---------|
-| Linux/macOS | `os.symlink` | 失败 → `shutil.copy2` |
-| Windows 管理员/开发人员模式 | `os.symlink` | 文件 → `os.link`（硬链接）；目录 → `mklink /J`（junction）；最后 → `shutil.copy2` |
-| Windows 普通用户 | `shutil.copy2` | 显式 warning 写入 `report.md` 顶部 |
+## 12. 引用与延伸阅读
 
-- junction 仅在 symlink 失败后使用，因其「被复制/移动后会搬空原目标」的副作用对源图库有破坏性。
-- 跨卷场景：硬链接不可用，直接 copy 并打 warning。
-- 实现伪代码与 ONNX EP 选型表见 [05-data-and-storage.md §4](05-data-and-storage.md)。
-
-## 3. 算法关键参数（v0.1 起步值）
-
-- 检测：`det_thresh=0.5`，`det_size=(640,640)`（CPU 起步）；如速度敏感可降为 `(320,320)`。
-- 嵌入：L2 归一化 512 维（InsightFace `normed_embedding`）。
-- 度量：**cosine**（在归一化嵌入上等价于 Euclidean：`cos ≈ 1 - dist²/2`）。
-- 聚类：HDBSCAN，`min_cluster_size=3`，`min_samples=2`（[01 AC-1](01-product-requirement.md) 锁定），`metric='cosine'`，`cluster_selection_method='leaf'`。
-- 距离合并（同人判定）：
-  - `cos ≥ 0.6` —— 强同人
-  - `0.45 ≤ cos < 0.6` —— 宽松同人
-  - `cos < 0.3` —— 不同人
-- 二次合并：HDBSCAN 给出初始簇后，**两簇质心 cos ≥ 0.55** 强制合并（可配置）；这一步骤救回「同一人被切两簇」的常见问题。
-- 孤儿：`cos < 0.4` 到簇质心的成员，标记为 `low_confidence`，进入 `output/_review/`。
-
-> 这些值需要在 v0.1 阶段通过家庭相册 demo 数据集调优，记录在 [04-algorithm-pipeline.md](04-algorithm-pipeline.md)。
-
-## 4. 关键风险
-
-| 风险 | 等级 | 缓解 |
-|------|------|------|
-| 跨年龄段、化妆、口罩导致漏识 | 高 | 保留人工校正；阈值可调；定期重建 |
-| Windows 软链接权限 | 中 | 实现 junction/copy 双路径；README 文档化 |
-| HEIC/RAW 依赖系统库 | 中 | 提供可选 extras（`pick-face[heic,raw]`） |
-| 模型/数据出境合规 | 中 | 默认全本地；网络仅在显式 `--update-models` 时启用 |
-| 单进程内存爆炸（n 很大） | 中 | 分批 embedding + Annoy 索引；流式聚类 |
-| 同卵双胞胎 / 极相似误并 | 低 | 提供 `--high-precision` 模式（更高阈值 + 双趟合并） |
-
-## 5. 最小可行性建议（MVP 切片）
-
-1. CLI：`pick-face scan --src <dir> --src <dir> --out <dir> --model buffalo_l --workers 4`
-2. 检测+嵌入：InsightFace `buffalo_l` + ONNX Runtime CPU EP（可加 `--provider auto` 自动探测）
-3. 聚类：HDBSCAN + 簇质心二次合并（阈值 0.55）
-4. 格式：JPG/PNG/HEIC/HEIF/WebP/GIF（首帧）/ RAW（先 EXIF thumbnail，失败再 rawpy）
-5. 输出：软链接（symlink → hardlink → copy 三段回退，Windows 额外 junction）+ index.sqlite + report.md + clusters.html
-6. 增量：幂等键 = `(abs_path, size, mtime_ns, sha1_8)`，命中即 skip
-7. 校正：仅 CLI（merge/split/remove），v0.2 再做 TUI/Web
-8. 模型下载：首次 `--init-models` 一次性拉取 buffalo_l（~300–600MB），之后全离线
-9. README 顶部明记：许可（InsightFace 模型非商用研究）、首次需联网、Windows 软链接特权
-
-详见 [06-engineering-plan.md](06-engineering-plan.md) 的 M1 任务分解与「依赖与 CI」章节（[06 §7](06-engineering-plan.md#7-依赖与-ci)）。
-
-## 6. 验证指标（建议基线）
-
-| 指标 | 目标 | 测量方式 |
-|------|------|---------|
-| 端到端单图平均耗时（CPU） | ≤ 1.5s（中端 x86），RAW 走 thumbnail 后 ≤ 0.3s | 加时间戳日志 |
-| 增量重扫（无变更） | ≤ 5s / 万张 | 仅 DB 查询 |
-| 簇纯净度（precision） | ≥ 95%（top-20 大簇人工抽检） | 100 张/簇 |
-| 簇召回（recall@family） | ≥ 90% | 抽检家人 |
-| 误合并率 | ≤ 1% | 抽检 |
-| `_review/` 占比 | ≤ 5% 面孔 | DB 统计 |
-| 软链接成功率 | Linux/macOS 100% symlink；Windows ≥ 95% symlink + ≤ 5% junction | 日志 |
-
-## 7. 参考资料
-
-- InsightFace python-package README — https://github.com/deepinsight/insightface/blob/master/python-package/README.md
-- InsightFace 主仓 — https://github.com/deepinsight/insightface
-- InsightFace-REST (SthPhoenix) — https://github.com/SthPhoenix/InsightFace-REST
-- face_recognition (ageitgey) — https://github.com/ageitgey/face_recognition
-- DeepFace (serengil) — https://github.com/serengil/deepface
-- ONNX Runtime Execution Providers — https://onnxruntime.ai/docs/execution-providers/
-- DirectML with ONNX Runtime — https://learn.microsoft.com/en-us/windows/ai/windows-ml/
-- Windows Symbolic Links (Developer Mode) — https://learn.microsoft.com/en-us/windows/uwp/get-started/file-mgmt#symlinks
-- Windows Hard Links and Junctions — https://learn.microsoft.com/en-us/windows/win32/fileio/hard-links-and-junctions
-- Python `os.symlink` — https://docs.python.org/3/library/os.html#os.symlink
-- pillow-heif PyPI — https://pypi.org/project/pillow-heif/
-- rawpy PyPI — https://pypi.python.org/pypi/rawpy
-- HDBSCAN vs DBSCAN (Towards Data Science 2024) — https://towardsdatascience.com/hdbscan-vs-dbscan-a-comparative-analysis-2ebbd45f9e1e
-- Agglomerative + HDBSCAN for face clustering (arXiv 2403.12677) — https://arxiv.org/abs/2403.12677
-- Chinese Whispers for face clustering — https://www.vision-rybnik.eu/publications/cw_face.pdf
-- Review of clustering algorithms for face recognition (Springer 2020) — https://link.springer.com/article/10.1007/s10462-020-09943-9
-- imagehash (perceptual hash) — https://pypi.org/project/Imagehash/
+- [03 §服务架构](03-architecture-design.md)
+- [04 §聚类流水线](04-algorithm-pipeline.md)
+- [06 §M6+ 里程碑](06-engineering-plan.md)
+- 归档：[M5 CLI §栈选型](archive/m5-cli/02-technical-pre-research.md)

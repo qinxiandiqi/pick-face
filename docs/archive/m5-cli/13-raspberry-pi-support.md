@@ -1,10 +1,8 @@
 # 13 Raspberry Pi / 低功耗 ARM 支持
 
-> 文档版本：v3.0 · 2026-08-12
-> 范围：把"pick-face v3 Web 服务跑在树莓派 4/5、RK3588 等低功耗 ARM 板"这一目标在硬件门槛、模型选择、Docker 部署、性能基线、CI 守卫五个层面完整闭环。
+> 文档版本：v0.2（路线 B 落地稿） · 2026-08-07
+> 范围：把"pick-face 跑在树莓派 3B / 4 / RK3588 等低功耗 ARM 板"这一目标在硬件门槛、模型选择、安装步骤、性能基线、CI 守卫五个层面完整闭环。
 > **本文是单一权威解读**。任何与本文件冲突的章节（README / 01 / 03 / 06 / 10），以本文件为准。
-
-> **v3 note**：v3 是 Web 服务而非 CLI。需要 Docker（推荐）或 `pick-face-web serve` 长驻。Pi 3B 仍是 INT8 模型 + yunet-sface 的目标平台；yunet-arcface INT8 仅在 Pi 4B 4 GB+ / Pi 5 上跑得动。
 > 关联：[10 §2 model pack 总览](10-model-stack.md) · [11 §2.2 商业合规四条路径](11-commercial-compliance.md) · [14-model-pack-plugins.md](14-model-pack-plugins.md)
 
 ## 0. 摘要（60 秒版）

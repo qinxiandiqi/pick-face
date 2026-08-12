@@ -1,493 +1,528 @@
-# 03 系统架构与模块设计
+# 03 架构设计：pick-face Web 相册服务（v3.0）
 
-> 文档版本：v0.1（预研稿） · 2026-07-30
+> 文档版本：v3.0 · 2026-08-12
+> 范围：服务模块划分、HTTP API 契约、worker 流水线、目录布局
+> 关联：[01 PRD](01-product-requirement.md) · [02 栈选型](02-technical-pre-research.md) · [05 数据](05-data-and-storage.md)
 
-## 1. 设计原则
+## 0. 摘要
 
-- **离线优先**：默认完全本地运行；任何网络行为必须显式 opt-in。
-- **幂等可重入**：同一份输入多次运行结果一致；运行可中断/恢复。
-- **关注点分离**：`scan → detect → embed → cluster → link` 五阶段解耦，每阶段可独立替换。
-- **可观察**：每个阶段输出可校验中间产物；CLI 与 JSON 双格式进度。
-- **少依赖**：核心运行只依赖 numpy/Pillow/SQLite/opencv-python/onnxruntime；HDBSCAN/hnswlib 作为必装核心（聚类与 ANN）；`insightface` 在路线 B 后由 model pack 插件自带，不再进核心依赖。ONNX provider (CUDA/DirectML) 作为可选 extras。
-
-## 2. 系统架构总览
+v3 在 v2.x 五域子包结构上加一层 **service domain**（`src/pick_face/service/`），不破坏现有 ingest/store/output 边界。
 
 ```
-                 ┌──────────────────────────────────────────┐
-                 │           pick-face CLI / API            │
-                 └──────────────────────────────────────────┘
-                                   │
-                ┌──────────────────┼────────────────────┐
-                ▼                  ▼                    ▼
-         ┌────────────┐     ┌────────────┐        ┌────────────┐
-         │   Scan     │ ──▶ │  Detect &  │ ──▶   │  Cluster   │
-         │ (walk fs)  │     │   Embed    │        │ (HDBSCAN)  │
-         └────────────┘     └────────────┘        └────────────┘
-                │                  │                     │
-                ▼                  ▼                     ▼
-         ┌────────────────────────────────────────────────────┐
-         │  Index Store  (SQLite + 文件 hash + Annoy/HNSW)    │
-         └────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-                        ┌─────────────────────┐
-                        │  Linker / Reporter  │
-                        └─────────────────────┘
-                                   ▲
-                                   │
-                         ┌─────────┴─────────┐
-                         │  Review (人工校正) │
-                         │  merge/split/rm   │
-                         └───────────────────┘
+浏览器 SPA (React + Vite + TS + shadcn/ui + Tailwind)
+   │
+   │ HTTP (FastAPI) + SSE
+   ▼
+┌──────────────────────────────────────────────────────────┐
+│              FastAPI app (uvicorn, port 8000)            │
+│                                                          │
+│   api/        api/             api/                      │
+│   ├── persons ──┤              ├── config                │
+│   ├── photos ───┤              ├── scan  ──── SSE        │
+│   ├── viewer ───┤              ├── health                │
+│                                  └────                    │
+│                                                          │
+│   service/  (新 domain)                                  │
+│   ├── config_service   ← 路径白名单 / 配置 CRUD          │
+│   ├── scan_service     ← 启动扫描 / 进度                  │
+│   ├── person_service   ← 虚拟相册 CRUD + review         │
+│   ├── photo_service    ← 缩略图 / 元数据 / 原图流       │
+│   └── file_watcher     ← watchdog 适配层                │
+│                                                          │
+│   worker/  (后台异步任务)                                │
+│   ├── scan_worker      ← 扫描 → 检测 → 嵌入             │
+│   ├── index_worker     ← HNSW 增量                      │
+│   └── cluster_worker   ← HDBSCAN 周期                   │
+│                                                          │
+│   ingest/  store/  output/  platform/   ← v2.x 算法内核  │
+└──────────────────────────────────────────────────────────┘
 ```
 
-> 校对通路：`review apply` → 写入 `review_decision` 表 → 下次 `cluster` 读出作为 must/cannot-link 强约束。
+## 1. 模块划分
 
-## 3. 模块划分
+### 1.1 新增 `service/` 子包
 
-代码按领域拆成 5 个子包（`core` / `ingest` / `store` / `output` / `platform`），
-依赖单向：`core` ← `ingest` ← `store` ← `output`，`platform` 横切。
-每个子包内部再按职责分模块。
+| 文件 | 职责 |
+|---|---|
+| `service/config_service.py` | 路径白名单校验 + 配置 CRUD（持久化到 `config.toml`） |
+| `service/scan_service.py` | 启动扫描任务、进度 SSE、暂停/恢复 |
+| `service/person_service.py` | 虚拟相册 list/rename/merge/delete（薄包装 `store/review.py`） |
+| `service/photo_service.py` | 缩略图、原图流（Range）、元数据查询 |
+| `service/file_watcher.py` | watchdog → asyncio.Queue 适配 |
 
-| 子包 | 模块 | 路径 | 职责 |
-|------|------|------|------|
-| `pick_face.core`      | `config`      | `src/pick_face/core/config.py`      | 配置 schema 校验、CLI 解析 |
-| `pick_face.core`      | `errors`      | `src/pick_face/core/errors.py`      | 异常层级 + 退出码契约 |
-| `pick_face.core`      | `hashing`     | `src/pick_face/core/hashing.py`     | xxh3_64 + 文件 ID 拼接 |
-| `pick_face.core`      | `images`      | `src/pick_face/core/images.py`      | 解码、EXIF 旋转、降采样 |
-| `pick_face.core`      | `paths`       | `src/pick_face/core/paths.py`       | 跨平台缓存目录 |
-| `pick_face.ingest`    | `scanner`     | `src/pick_face/ingest/scanner.py`   | 目录遍历、glob 过滤、content hash、增量 diff |
-| `pick_face.ingest`    | `detector`    | `src/pick_face/ingest/detector.py`  | 检测接口 `FaceDetector` |
-| `pick_face.ingest`    | `embedder`    | `src/pick_face/ingest/embedder.py`  | 嵌入接口 `FaceEmbedder` |
-| `pick_face.ingest`    | `align`       | `src/pick_face/ingest/align.py`     | 关键点对齐裁剪 |
-| `pick_face.ingest`    | `cluster`     | `src/pick_face/ingest/cluster.py`   | 聚类 + 约束注入 + 置信度 |
-| `pick_face.store`     | `index`       | `src/pick_face/store/index.py`      | SQLite schema、WAL 模式 |
-| `pick_face.store`     | `index_hnsw`  | `src/pick_face/store/index_hnsw.py` | HNSW 索引（hnswlib + numpy fallback） |
-| `pick_face.store`     | `checkpoint`  | `src/pick_face/store/checkpoint.py` | 长任务 checkpoint / resume |
-| `pick_face.store`     | `review`      | `src/pick_face/store/review.py`     | 人工校正决策存储 |
-| `pick_face.output`    | `linker`      | `src/pick_face/output/linker.py`    | 软链接/回退；输出目录原子写入 |
-| `pick_face.output`    | `mirrors`     | `src/pick_face/output/mirrors.py`   | cluster meta / index.json 写入 |
-| `pick_face.output`    | `reporter`    | `src/pick_face/output/reporter.py`  | `report.md/json/html` |
-| `pick_face.output`    | `parallel`    | `src/pick_face/output/parallel.py`  | 进程池 + 进度汇报 |
-| `pick_face.platform`  | `runtime`     | `src/pick_face/platform/runtime.py` | ONNX provider probe、device 选择 |
-| `pick_face.platform`  | `pack`        | `src/pick_face/platform/pack.py`    | `ModelPack` Protocol + `discover_packs()` entry-points loader（路线 B 新增）|
-| `pick_face.platform`  | `packs`       | `src/pick_face/platform/packs/`     | 内嵌 pack 实现（yunet-mfn 在内，未来 buffalo_sc 等）|
-| `pick_face.platform`  | `models`      | `src/pick_face/platform/models.py`  | 模型下载/缓存、许可证门控（LicenseClass 驱动）|
-| `pick_face.platform`  | `bench`       | `src/pick_face/platform/bench.py`   | 性能基准 |
-| `pick_face`           | `cli`         | `src/pick_face/cli.py`              | Typer 入口（保留在顶层） |
-| `pick_face`           | `__init__`    | `src/pick_face/__init__.py`         | 公共 API 重导出 |
+### 1.2 新增 `api/` 子包
 
-## 4. 工程结构树状图
+| 文件 | 路由前缀 | 职责 |
+|---|---|---|
+| `api/config.py` | `/api/config` | 路径 CRUD、健康检查 |
+| `api/scan.py` | `/api/scan` | 启动扫描、查询状态、SSE 进度 |
+| `api/persons.py` | `/api/persons` | 虚拟相册 list、详情 |
+| `api/photos.py` | `/api/photos` | 缩略图、原图流、EXIF |
+| `api/review.py` | `/api/review` | rename/merge/delete |
+| `api/health.py` | `/api/health` | 服务健康 |
 
-### 4.1 仓库布局（src layout）
+### 1.3 新增 `worker/` 子包
 
-```
-pick-face/
-├── pyproject.toml              # 项目元数据 + 依赖 + extras（[heic]/[raw]/[gpu]/[dev]）
-├── requirements.lock           # uv pip compile 锁定（提交到仓）
-├── README.md                   # 5 分钟 quickstart
-├── CHANGELOG.md                # Keep a Changelog 风格
-├── LICENSE                     # Apache-2.0（与模型许可解耦）
-├── .python-version             # 3.10/3.11/3.12
-├── .pre-commit-config.yaml
-├── ruff.toml                   # lint 配置
-├── mypy.ini                    # 类型检查
-├── mkdocs.yml                  # 文档站
-├── docs/                       # 见 docs/AGENTS.md
-│   ├── 01-product-requirement.md
-│   ├── 02-technical-pre-research.md
-│   ├── 03-architecture-design.md
-│   ├── 04-algorithm-pipeline.md
-│   ├── 05-data-and-storage.md
-│   ├── 06-engineering-plan.md
-│   ├── 07-risk-and-decisions.md
-│   ├── 08-review-notes.md
-│   ├── 09-face-recognition-pipeline.md
-│   ├── 10-model-stack.md
-│   ├── 11-commercial-compliance.md
-│   └── AGENTS.md                # 文档总览 (入口)
-├── migrations/                 # 不可变 SQL，按版本号升序
-│   ├── 0001_init.sql
-│   ├── 0002_add_review_decision.sql
-│   └── ...
-├── src/
-│   └── pick_face/              # 主包（5 个领域子包 + 顶层 cli/__init__）
-│       ├── __init__.py         # 公共 API 重导出
-│       ├── cli.py              # Typer 入口
-│       ├── core/               # 底层：config, errors, hashing, images, paths
-│       │   ├── __init__.py
-│       │   ├── config.py
-│       │   ├── errors.py
-│       │   ├── hashing.py
-│       │   ├── images.py
-│       │   └── paths.py
-│       ├── ingest/             # 摄取流水线：scanner, detector, embedder, align, cluster
-│       │   ├── __init__.py
-│       │   ├── scanner.py
-│       │   ├── detector.py
-│       │   ├── embedder.py
-│       │   ├── align.py
-│       │   └── cluster.py
-│       ├── store/              # 持久层：index, index_hnsw, checkpoint, review
-│       │   ├── __init__.py
-│       │   ├── index.py
-│       │   ├── index_hnsw.py
-│       │   ├── checkpoint.py
-│       │   └── review.py
-│       ├── output/             # 输出层：linker, mirrors, reporter, parallel
-│       │   ├── __init__.py
-│       │   ├── linker.py
-│       │   ├── mirrors.py
-│       │   ├── reporter.py
-│       │   └── parallel.py
-│       ├── platform/           # 平台/运维：runtime, models, bench
-│       │   ├── __init__.py
-│       │   ├── runtime.py
-│       │   ├── models.py
-│       │   └── bench.py
-│       └── py.typed
-├── tests/
-│   ├── unit/                   # 单测
-│   ├── integration/            # 端到端（含 mock 推理）
-│   ├── acceptance/             # AC-1~AC-9 评测脚本（含 11 §3.5 test_no_model_in_distribution.py）
-│   │   └── run_eval.py
-│   ├── fixtures/
-│   │   ├── synth_faces/        # 合成人脸图
-│   │   ├── mock_insightface.py # MockDetector / MockEmbedder
-│   │   └── demo_dataset/       # 50 人 / 约 1000 张去标识化（git-lfs，详见 08 §6.3 AC-6）
-│   └── conftest.py
-├── bench/                      # 性能基准
-│   ├── run.py
-│   ├── dataset_synth/          # 10k 合成图
-│   └── reports/
-├── ci/
-│   ├── lint.yml
-│   ├── test.yml                # ubuntu/macos/windows × py 3.10/3.11/3.12
-│   ├── smoke.yml               # 三平台 mock 端到端
-│   └── eval.yml                # 公开基准（仅 ubuntu + GPU runner）
-└── .github/
-    ├── workflows/
-    └── CODEOWNERS
-```
+| 文件 | 职责 |
+|---|---|
+| `worker/scan_worker.py` | 队列消费者：调用 detector + embedder，写入 SQLite + HNSW |
+| `worker/index_worker.py` | HNSW 增量添加 |
+| `worker/cluster_worker.py` | 周期任务：新 embedding 累积到 N 张时触发 HDBSCAN |
 
-### 4.2 运行期数据布局（用户机器上）
+### 1.4 复用 v2.x
+
+| v2.x 模块 | v3 复用方式 |
+|---|---|
+| `ingest/scanner.py` | `scan_worker` 直接调用 |
+| `ingest/detector.py` | 同上 |
+| `ingest/embedder.py` | 同上 |
+| `ingest/cluster.py` | `cluster_worker` 触发 |
+| `ingest/align.py` | 直接调用 |
+| `store/index.py` + `store/index_hnsw.py` | worker 增量写入 |
+| `store/review.py` | `person_service` 调用 |
+| `output/mirrors.py` | `photo_service` 用于原图路径映射 |
+| `output/reporter.py` | 复用统计逻辑 |
+| `platform/runtime.py` | `scan_worker` 启动 detector/embedder session |
+| `platform/packs/*` | 完全不动 |
+
+### 1.5 模块依赖图
 
 ```
-<output>/
-├── .cache/
-│   ├── index.sqlite            # 权威元数据
-│   ├── index.sqlite-wal        # WAL 日志
-│   ├── faces.hnsw              # ANN 缓存（可由 SQLite 重建）
-│   ├── thumbs/<face_id>.jpg    # 报告用缩略图（GC 清理）
-│   └── diagnostics-<ts>.zip    # 仅 --diagnostics 时产出
-├── .staging-<run_id>/          # 半成品，原子切换前不可见
-├── .prev-<run_id>/             # 上一版输出（最多保留 3 个，供 rollback）
-├── .lock                       # flock 互斥（CLI 启动时持有）
-├── index.json                  # SQLite 镜像，调试用
-├── report.md
-├── report.html
-├── person-0001/
-│   ├── meta.json
-│   └── <src_rel_path> -> <abs_src>
-├── person-0002/...
-├── _review/                    # 宽松同人或低置信度（--emit-review 启用时）
-└── _archive/                   # 被合并/废弃簇的旧链接
+api/  ──▶  service/  ──▶  ingest/  ──▶  core/
+              │            │
+              │            ├─▶ store/
+              │            │
+              │            └─▶ platform/
+              │
+              └─▶ worker/  ──▶ ingest/ + store/ + platform/
+
+output/    ← 所有 domain 可调用（路径映射、报表）
 ```
 
-模型与全局缓存（跨 `<output>` 共享）：
+**DependencyRule 不变**：service 依赖 ingest/store/output/platform；worker 依赖 ingest/store/platform。service 和 worker 之间是事件驱动（asyncio.Queue），不直接 import。
+
+## 2. HTTP API 契约（v3.0）
+
+所有 endpoint 返回 JSON；FastAPI 自动 OpenAPI 文档位于 `/api/docs`。
+
+### 2.1 配置 (`/api/config`)
 
 ```
-# Linux
-$XDG_CACHE_HOME/pick-face/models/        # 默认 ~/.cache/pick-face/models
-# macOS
-~/Library/Caches/pick-face/models/
-# Windows
-%LOCALAPPDATA%\pick-face\models\
-# 任意平台可用 PICK_FACE_MODEL_DIR 指向本地模型根目录
-# 路径布局: model_dir/<pack_id>/<file>.onnx
-#  例: ~/.cache/pick-face/models/yunet-mfn/face_detection_yunet_2023mar.onnx
-#      ~/.cache/pick-face/models/buffalo_l/det_10g.onnx (opt-in)
+GET  /api/config                  # 当前配置（白名单路径、模型 pack、merge_threshold）
+POST /api/config/paths            # 添加扫描路径 { path: str }
+                                 #   400 INVALID_PATH / NOT_WHITELISTED / NOT_FOUND
+DELETE /api/config/paths/{id}     # 移除路径
+GET  /api/config/paths            # 列出已配置路径
 ```
 
-### 4.3 包内依赖方向
+### 2.2 扫描 (`/api/scan`)
 
 ```
-cli ──▶ config ──▶ scanner ──▶ images ──▶ detector ──▶ embedder
-                                          │             │
-                                          ▼             ▼
-                                       align         cluster
-                                          │             │
-                                          └────┬────────┘
-                                               ▼
-                                             index  ◀── review
-                                               │
-                                               ▼
-                                             linker ──▶ reporter
-
-# 路线 B 新增：core 不再 import insightface / onnxruntime
-cli ──▶ pack.discover_packs() ──▶ pack.build_detector() / build_embedder()
-       (entry-points 加载)
-       ▼
-       Detector / Embedder (Protocol)
-       ▼
-       indexer (纯业务逻辑，不绑定任何 pack 实现)
+POST /api/scan/start              # 启动扫描 { paths?: [str], full?: bool }
+                                 #   202 ACCEPTED；扫描 id
+POST /api/scan/{id}/pause
+POST /api/scan/{id}/resume
+POST /api/scan/{id}/cancel
+GET  /api/scan/active             # 当前活动扫描
+GET  /api/scan/{id}               # 状态
+GET  /api/scan/{id}/progress      # SSE: {processed, total, faces, errors, eta_sec}
 ```
 
-约束：
-- `detector` / `embedder` / `cluster` 只依赖 `index`（写入 + 读 face）；不直接读源目录
-- `linker` 与 `reporter` 只读 `index`；不写 `face` 表
-- `review` 写 `review_decision` 表，由 `cluster` 在下次 run 消费
-- `cli` 是唯一允许 import `pack`（模型下载 + 插件发现）的入口，便于审计「网络 IO 调用点」与「插件入口」
-- **核心包不再依赖** `insightface` / `onnxruntime`（前者全移走，后者移至 pack 自带）
+SSE 流格式（`text/event-stream`）：
 
-## 5. 数据流（一次完整 run）
+```
+event: progress
+data: {"processed": 4321, "total": 10000, "faces": 234, "errors": 3, "eta_sec": 180}
 
-1. **Config 加载** —— 读 `pick-face.toml`、合并 CLI flag，校验源/输出目录。
-2. **Scan** —— 遍历所有 `--src`，按后缀白名单与 exclude glob 过滤；计算 `xxh3` content hash；与 `index` 比对决定 ADD/MOD/UNCHANGED/DEL。
-3. **Image Decode** —— 对 ADD/MOD 项做 EXIF 旋转 + 降采样到最大边 1600px（保留原图以备后续精细化）。
-4. **Detect & Embed** —— 调 `Detector.detect()` 得到 bbox+landmarks；`Aligner` 裁剪；`Embedder.embed()` 得 128-D / 512-D 向量并 L2 归一化（维度由 pack 决定；`yunet-mfn` 是 128-D，`buffalo_l` / `buffalo_sc` 是 512-D，详见 [10 §2](10-model-stack.md)）。
-5. **Persist** —— 写入 `index.sqlite`：`source(id,path,hash,mtime)`、`face(id,source_id,bbox,landmarks,embedding,quality,cluster_id)`。
-6. **Cluster** —— 取出全部 embedding（已存在 + 新增），用人工约束（merge/split）更新后跑 HDBSCAN；写回 `face.cluster_id`。
-7. **Link** —— 根据 `face.cluster_id` 生成/更新 `output/<person-id>/<source-relative>` 软链接；多余链接进入待清理列表。
-8. **GC** —— 删除指向已不存在的源的链接；记录被清理的路径到运行日志。
-9. **Report** —— 写 `report.md`：`total_sources / total_faces / persons / noise_faces / confidence_histogram`。
+event: stage
+data: {"stage": "detecting", "scan_id": "abc"}
 
-## 6. 关键接口契约
+event: done
+data: {"scan_id": "abc", "result": "ok"}
+```
+
+### 2.3 虚拟相册 (`/api/persons`)
+
+```
+GET    /api/persons?cursor=&limit=50        # 列表（每项含 cover_url）
+GET    /api/persons/{id}                    # 详情：name, photo_count, sources, cover_face_id
+GET    /api/persons/{id}/cover              # ⭐ 虚拟相册封面（112×112 人脸 chip）
+GET    /api/persons/{id}/photos?cursor=&limit=200&sort=mtime_desc
+PATCH  /api/persons/{id}                    # 重命名 { name: str }
+POST   /api/persons/merge                   # { source_ids: [id], target_id: id }
+DELETE /api/persons/{id}                    # 软删除（mark deleted）
+```
+
+**封面契约**（关键）：
+- `/api/persons/{id}/cover` 返回的是 **人脸 chip（112×112 对齐后）**，不是原图缩略图
+- 数据源：`persons.thumbnail_face_id` → `faces.chip_path`
+- 选脸策略：HDBSCAN 输出 `cluster_confidence` 最高的；同分时挑 `det_score` 最高的；再同时挑 `bbox_w * bbox_h` 最大的（更清晰）
+- 用户在 `/persons` 列表看到的"这是谁"，**就是这张脸的清晰正面照**
+- 缓存：服务端可加 `ETag: "<face_id>-<mtime>"`（M7）
+
+### 2.4 图片 (`/api/photos`)
+
+```
+GET  /api/photos/{id}                     # 流式原图（支持 HTTP Range，不复制）
+GET  /api/photos/{id}/thumbnail           # 缩略图（JPEG 256×256）
+GET  /api/photos/{id}/metadata            # EXIF + 路径 + mtime + 该脸所在 person
+GET  /api/photos/{id}/faces               # 该图所有人脸（bbox + 哪个 person）
+```
+
+**安全契约**：`/api/photos/{id}` 永远只返回**已记录到数据库**的图片。  
+绝不能直接 `FileResponse(request.query_params["path"])` —— 那会让攻击者用 `?path=../../etc/passwd` 读到任何文件。
+
+### 2.5 Review (`/api/review`)
+
+```
+GET  /api/review/pending?limit=20        # 待人工 review（低置信聚类）
+POST /api/review/{face_id}              # { action: "accept" | "reject" | "merge_with", target?: id }
+```
+
+### 2.6 健康 (`/api/health`)
+
+```
+GET  /api/health
+→ {"status": "ok", "packs": [...], "workers": {...}, "queue_depth": N}
+```
+
+## 3. 数据流（端到端）
+
+### 3.1 启动时
+
+```
+1. uvicorn 启动 FastAPI app
+2. app.on_event("startup")
+   ├── 加载 .pick-face/config.toml（白名单路径）
+   ├── 启动 N 个 scan_worker（asyncio task）
+   ├── 启动 cluster_worker（APScheduler）
+   ├── 启动 file_watcher（watchdog）
+   └── 注册 SSE 广播
+```
+
+### 3.2 用户添加路径后
+
+```
+UI: POST /api/config/paths { path: "/mnt/photos/2024" }
+   │
+   ▼ service/config_service.add(path)
+   │  ├─ Path.resolve() + 白名单校验
+   │  ├─ os.access(path, R_OK) 检查
+   │  └─ 持久化到 config.toml
+   ▼ service/file_watcher.watch(path)
+      └─ watchdog.Observer.schedule(handler, path)
+   ▼ (可选) service/scan_service.start(path)
+      └─ asyncio.Queue.put(scan_task)
+            ▼ scan_worker
+               ├─ ingest/scanner.iter(path)
+               ├─ for each image: detector + embedder
+               ├─ 写入 SQLite (face, embedding) + HNSW
+               └─ SSE 广播 progress
+```
+
+### 3.3 浏览相册
+
+```
+UI: GET /api/persons
+   ▼ service/person_service.list()
+      └─ store/review.list_persons() (复用 v2.x)
+   ← JSON: [{id, name, photo_count, thumbnail_url}]
+
+UI: GET /api/persons/{id}/photos
+   ▼ service/person_service.photos(id)
+      └─ store/index.faces_by_person(id)
+   ← JSON: [{photo_id, mtime, thumbnail_url, faces: [...]}]
+
+UI: GET /api/photos/{id}
+   ▼ service/photo_service.stream(id)
+      ├─ store/index.photo_path(id) → /mnt/photos/.../IMG_001.jpg
+      ├─ FastAPI FileResponse(path, headers={...})  # 不复制
+      └─ Starlette Range middleware 自动处理 If-Range
+```
+
+## 4. 安全设计
+
+### 4.1 路径白名单（US-1 AC-2）
 
 ```python
-# detector.py
-class FaceBox(NamedTuple):
-    bbox: tuple[float, float, float, float]   # x1, y1, x2, y2
-    score: float
-    landmarks: tuple[tuple[float, float], ...]  # 5/68 points
-    quality: float                              # 0..1
+ALLOWED_ROOTS = [Path("/mnt/photos").resolve()]
 
-class FaceDetector(Protocol):
-    def warmup(self) -> None: ...
-    def detect(self, image: np.ndarray) -> list[FaceBox]: ...
-    def detect_batch(self, images: list[np.ndarray]) -> list[list[FaceBox]]: ...
-    @property
-    def model_name(self) -> str: ...           # 'buffalo_l' 等
-    @property
-    def provider(self) -> str: ...             # 'cpu' / 'cuda' / 'directml'
+def validate_scan_path(p: str) -> Path:
+    resolved = Path(p).resolve()
+    if not any(_is_subpath(resolved, r) for r in ALLOWED_ROOTS):
+        raise InvalidPathError(f"{p} not under any allowed root")
+    if not resolved.exists() or not resolved.is_dir():
+        raise NotFoundError(f"{p} not a directory")
+    return resolved
 
-# embedder.py
-class FaceEmbedder(Protocol):
-    def embed(self, chip: np.ndarray) -> np.ndarray: ...        # 1D, L2-normalized
-    def embed_batch(self, chips: list[np.ndarray]) -> np.ndarray: ...  # (B, D)
-
-# cluster.py
-@dataclass
-class Constraints:
-    must_link: list[tuple[int, int]] = field(default_factory=list)   # (face_a, face_b)
-    cannot_link: list[tuple[int, int]] = field(default_factory=list)
-    excluded_faces: set[int] = field(default_factory=set)
-
-@dataclass
-class ClusterResult:
-    labels: np.ndarray   # int32, -1 = noise
-    probs: np.ndarray    # float32
-    centroid: np.ndarray # (k, D)
-
-class Clusterer(Protocol):
-    def fit(self, embeddings: np.ndarray, constraints: Constraints) -> ClusterResult: ...
-    def incremental_assign(self, new_emb: np.ndarray, existing: ClusterResult) -> tuple[np.ndarray, np.ndarray]: ...
-
-# linker.py
-class Linker(Protocol):
-    def ensure(self, dst: Path, src: Path) -> LinkResult: ...
-    def cleanup(self, dangling: Iterable[Path]) -> int: ...
+def _is_subpath(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 ```
 
-**错误语义**：
-- 检测/嵌入错误以 `FaceError`（含 `path`, `stage`, `cause`）抛回；不静默吞。
-- 批处理接口对单张失败返回 `[]`/`None` 而不中断整批。
-- 模型加载失败抛 `ModelLoadError`；CLI 捕获后提示 `--init-models` 与离线安装指引。
+**v3 仅支持运维员配置的根**（如 `/mnt/photos`）。不允许任意路径。
 
-## 7. CLI 命令（v0.1）
+### 4.2 原图流（US-4 AC-7）
+
+**绝不能**直接响应任意 path。响应流程：
 
 ```
-pick-face init                          # 生成默认 pick-face.toml (pack = "yunet-mfn", Apache-2.0)
-pick-face init-models --pack yunet-mfn  # 下载 5 MB OpenCV Zoo 权重（需 --allow-network）
-pick-face scan                          # 扫描 + 写 source 表
-pick-face index                         # 检测+嵌入
-pick-face cluster                       # 聚类
-pick-face link                          # 生成/更新软链接
-pick-face run                           # scan+index+cluster+link 一步执行
-pick-face doctor                        # 列出已注册 model pack + license + 状态（路线 B 新增）
-pick-face report                        # 输出 report.md
-pick-face review                        # 启动交互式校正（TUI）
-pick-face review apply FILE             # 应用预先编辑的 review.json
-pick-face gc                            # 清理悬挂链接 + 过期缩略图
-pick-face prune                         # 清理 _archive（v0.2）
-pick-face rollback --to ID              # 回滚到指定 run_id
-pick-face rebuild                       # 强制全量重建
+photo_id → store.index.photo_path(photo_id) → 已校验的 Path → FileResponse
 ```
 
-## 8. 进程模型与并行
+`photo_path` 返回的 Path 必须**只在扫描时入库** —— 攻击者无机会注入。
 
-- **CPU 推理（默认）**：每 worker 独立加载 ONNX session；多 worker 多进程；GIL 不影响推理。
-- **GPU 推理（`--provider cuda/directml`）**：单进程 + `ThreadPoolExecutor`；多 worker 会因 ONNX session 不共享反而拖累。
-- **检测/嵌入 vs 聚类**：检测/嵌入是 CPU/GPU 重活；HDBSCAN 聚类是纯 Python/CPU 短任务，单进程跑。
-- **流水线**：`asyncio.Queue` 串联 scan → decode → detect/embed → persist；CPU 后端用 `ProcessPoolExecutor`，GPU 后端用 `ThreadPoolExecutor`。
-- **并行度建议**：
-  - CPU：`--workers = min(os.cpu_count(), 4)`（每 worker 内存 ~500MB）。
-  - GPU：`--workers = 1`（不并行），但 `--prefetch 4` 提高 GPU 利用率。
-- **降级**：`--provider auto` 时尝试 `cuda` → `directml` → `cpu`；失败链路在 `report.md` 顶部 `Warnings` 列出。
-- **ONNX EP 选择**：见 [02 §2.5 EP 选型表](02-technical-pre-research.md)（亦将在 [05 §4](05-data-and-storage.md) 重复一次以保证模块内自洽）。
+### 4.3 鉴权（v3 默认无；v4 才有）
 
-## 9. 错误处理
+- v3 默认**单用户自托管**：bind 到 `127.0.0.1` 或 LAN
+- 反向代理（nginx / caddy）负责 HTTPS + Basic Auth / OIDC
+- FastAPI 自身不实现用户体系
 
-- 单张图解码失败 → 记入 `error_log`，继续其它图。
-- 模型加载失败 → 显式提示 `--init-models` 或离线安装路径。
-- 链接权限失败 → 自动回退为 `copy` 并在 `report.md` 顶部 `Warnings` 节列出。
-- 聚类无簇（全部噪声）→ 不创建任何 `person-*` 目录，但保留 `face` 表数据，可在 `review` 子命令中调阈值重试。
-- 外部破坏链接（用户删除或修改）→ `link` 阶段在 `link.actual_target IS NULL OR != source.path` 时记入 `dangling_links`；`pick-face gc` 周期清理。
-- **退出码契约**：
-  - `0` 全流程成功（含可恢复 warning）
-  - `2` 严重配置/参数错误（源/输出路径不可写、配置 schema 失败）
-  - `3` 模型不可用（首次未联网且未 `--init-models`）
-  - `4` 关键阶段（detect/embed/cluster）整体失败率 > 50%
-  - `5` 中断（SIGINT/SIGTERM）后的「部分完成」状态，下次可恢复
-- **JSON 进度事件协议**（`--progress json`）：
-  ```json
-  {"ts": 1722345678, "stage": "embed", "done": 1234, "total": 5000, "rate_fps": 4.1, "errors": 0}
-  ```
-  解析端按 `stage` 切分进度条；`errors` 字段与 `error_log` 计数一致。
-- **临时文件**：`.cache/thumbs/` 仅在 `report` 生成时落地；运行结束 24h 后或下次 `gc` 时清理未被引用的缩略图。
+### 4.4 速率限制
 
-## 10. 安全与隐私
+- `/api/scan/start`：每小时 ≤ 10 次
+- `/api/photos/{id}`：单 IP ≤ 100 req/s
 
-- 不写注册表、不读全局配置；仅写 `<output>` 与 `<output>/.cache/`。
-- 进程退出时清理临时缩略图。
-- 模型与缓存目录遵循 `XDG_CACHE_HOME` / `~/Library/Caches/pick-face` / `%LOCALAPPDATA%\pick-face` 跨平台约定。
-- 文档明示：所有处理在本地完成，开发者承诺不内置任何遥测。
+## 5. 目录布局
 
-## 11. 包管理设计
+**所有 pick-face 运行产生的文件全部归到一个独立的"应用根目录"下：**
 
-> 范围：开发期依赖、生产构建、模型/插件 extras、本地离线缓存、CI 与 PyPI 发布的统一管理。与 [06 §7 依赖与 CI](06-engineering-plan.md#7-依赖与-ci) 互补——本节给**原则 + 工作流**，06 给**具体版本下限**。
+```
+~/.pick-face/                              # 应用根目录（= PICK_FACE_HOME 的默认）
+├── config/
+│   └── config.toml                        # 白名单路径、模型 pack、阈值
+├── data/                                  # 数据（备份这一项 = 备份整个相册）
+│   ├── index.sqlite                       # 主数据库
+│   ├── index.sqlite-wal                   # WAL 日志
+│   ├── index.hnsw                         # HNSW 持久化
+│   ├── chips/                             # 人脸 chip（112×112 对齐后）—— 虚拟相册封面数据源
+│   │   └── ab/cd/<face_id>.jpg
+│   ├── thumbnails/                        # 原图缩略图（256×256 JPEG）—— 瀑布流显示
+│   │   └── ab/cd/<xxh3>.jpg
+│   ├── covers/                            # 虚拟相册封面（硬链接 / 缓存 chip）
+│   │   └── person_<id>.jpg
+│   ├── jobs/                              # 扫描任务状态（崩溃恢复 / 审计）
+│   │   └── scan-<uuid>.json
+│   └── logs/
+│       └── pick-face.log
+└── cache/                                 # 可丢弃的缓存
+    ├── models/                            # 模型权重（SHA256 pin，可重下）
+    │   ├── yunet-sface/
+    │   └── yunet-arcface/
+    └── tmp/                               # 解码 / 缩略图临时目录
+```
 
-### 11.1 工具选型（**包管理器统一使用 `uv`**）
+**路径解析优先级**：
+1. 环境变量 `PICK_FACE_HOME`（Docker / 多实例 / 调试用）
+2. 配置文件 `[server] data_dir`
+3. 默认 `~/.pick-face/`
 
-| 用途 | 工具 | 理由 |
-|------|------|------|
-| 依赖解析 / lockfile / venv / 安装 / 发布 | **`uv`**（**唯一主线**） | 单一工具覆盖 `pip` / `pip-tools` / `pipx` / `virtualenv` / `twine` 全部能力；lockfile 兼容 PEP 621；CI 与本地行为一致；减少「本地能跑 CI 失败」类问题 |
-| 项目元数据 | `pyproject.toml`（PEP 621） | 标准、可被 `pip` / `uv` 共同识别 |
-| 打包 | `hatchling`（`build-system`） | PEP 621 友好、wheel/sdist 干净；通过 `uv build` 调用 |
-| 校验 | `uv pip check` + `uv run pip-audit` | CI 必跑；安全审计 |
-| 环境隔离 | `uv venv` + `.venv/`（不提交） | 启动快、磁盘省 |
+**关键点**：
 
-> **决策（已合并到本节）**：**包管理器统一使用 `uv`**——`uv pip compile` 生成 `requirements.lock`、`uv pip sync` 消费 lockfile、`uv venv` 隔离环境、`uv build` 打包、`uv publish` 发布。**不**再使用 `pip-tools` / `pip-compile` / `twine` / `pypa/build` / `pipx` 作为工具名出现在文档与 CI 中；如确需用纯 `pip` 回放，`uv` 生成的 lockfile 与 `pip install -r requirements.lock` 兼容，但推荐使用 `uv pip sync`。
+1. **数据目录与扫描根目录解耦**——用户在 `/mnt/photos` 加新文件，服务把索引写入 `~/.pick-face/data/`，原图**不被复制**
+2. **单一命名空间 `~/.pick-face/`**——配置 / 数据 / 模型都在里面，卸载 `rm -rf ~/.pick-face` 即可清干净
+3. **Docker / 裸机路径一致**——容器内整个 `/data` 卷就是宿主的 `~/.pick-face`；多实例用 `PICK_FACE_HOME=/srv/pick-face-2` 隔离
 
-### 11.2 依赖分组（extras 矩阵）
+完整 schema 与备份策略见 [docs/05](05-data-and-storage.md)。
 
-| extras | 关键依赖 | 何时安装 | 默认？ |
-|--------|---------|---------|--------|
-| `pick-face`（核心） | `numpy`, `Pillow`, `opencv-python`, `typer`, `rich`, `pydantic`, `xxhash`, `hnswlib`, `hdbscan`, `onnxruntime` (CPU) | 始终 | ✅ |
-| `[heic]` | `pillow-heif` | 用户声明 | ❌ |
-| `[raw]` | `rawpy`（含 libraw 绑定） | 用户声明 | ❌ |
-| `[gpu]` | `onnxruntime-gpu` | 用户声明（替换 `onnxruntime`） | ❌ |
-| `[gpu-cuda12]` | `onnxruntime-gpu==1.17.*` + 文档 `cuda==12.x` 校验脚本 | Linux + NVIDIA | ❌ |
-| `[gpu-directml]` | `onnxruntime-directml`（Windows） | Windows + 无 CUDA | ❌ |
-| `[insightface]` | `insightface>=0.7.3`（**路线 B 后 opt-in**，给 `pick-face-modelpack-insightface` 用）| 用户声明 | ❌ |
-| `[dev]` | `pytest`, `pytest-cov`, `pytest-benchmark`, `ruff`, `mypy`, `pre-commit`, `pip-audit` | 开发者 | ❌ |
-| `[all]` | `[heic,raw,gpu]` | 全量自检 | ❌ |
+## 6. 启动 / 配置 / 工作流
 
-**Model Pack 是独立包**（不在核心 wheel）：
+### 6.1 CLI 入口（v3 新增）
 
-| 插件 | 依赖 | 何时装 | 默认？ |
-|---|---|---|---|
-| `pick-face-modelpack-yunet` | 走核心 `onnxruntime` | 始终（**核心包内置**，不需额外装）| ✅ |
-| `pick-face-modelpack-insightface` | `pick-face[insightface]` + `onnxruntime-gpu (可选)` | opt-in（要 buffalo_l/sc/antelopev2 时）| ❌ |
-| `pick-face-modelpack-my-arcface` (自训) | `onnxruntime` | 自训后 | ❌ |
+```bash
+pick-face-web init                          # 交互式初始化（生成 config.toml）
+pick-face-web serve --host 0.0.0.0 --port 8000
+pick-face-web scan --path /mnt/photos/2024  # CLI 模式扫描（与 v2.x 兼容）
+pick-face-web doctor                        # 健康诊断（沿用 v2.x）
+```
 
-**互斥约束**：
-- `[gpu]` 与 `[gpu-directml]` 互斥；CI 在同一环境只装其一，缺则降级
-- `[all]` 不强制安装 `[gpu]` 系列——GPU 仍需用户按硬件手动选
-- **路线 B 核心包不安装 `insightface`**；老用户显式 `pip install 'pick-face[insightface]'` + 装 `pick-face-modelpack-insightface` 保留原行为
-
-**示例**（`pyproject.toml` 节选）：
+### 6.2 配置文件（`~/.config/pick-face/config.toml`）
 
 ```toml
-[project]
-name = "pick-face"
-requires-python = ">=3.10,<3.13"
-dynamic = ["version"]
+[server]
+host = "0.0.0.0"
+port = 8000
+workers = 2                                  # asyncio worker 数
+data_dir = "~/.pick-face"                    # 应用根目录（默认；PICK_FACE_HOME 优先）
 
-[project.optional-dependencies]
-heic        = ["pillow-heif>=0.16"]
-raw         = ["rawpy>=0.18"]
-gpu         = ["onnxruntime-gpu>=1.17"]
-gpu-cuda12  = ["onnxruntime-gpu>=1.17,<1.18"]
-gpu-directml= ["onnxruntime-directml>=1.17"]
-dev         = ["pytest>=8", "pytest-cov>=5", "pytest-benchmark>=4",
-               "ruff>=0.6", "mypy>=1.10", "pre-commit>=3.8",
-               "pip-audit>=2.7", "types-Pillow"]
+[scan]
+allowed_roots = ["/mnt/photos", "/srv/photos"]
+default_pack = "yunet-sface"                 # 或 "yunet-arcface"
+incremental_interval_sec = 300               # watchdog 兜底轮询周期
 
-[project.scripts]
-pick-face = "pick_face.cli:app"
+[index]
+db_path = "~/.pick-face/data/index.sqlite"
+hnsw_path = "~/.pick-face/data/index.hnsw"
+chips_dir = "~/.pick-face/data/chips"
+thumbnails_dir = "~/.pick-face/data/thumbnails"
+covers_dir = "~/.pick-face/data/covers"
+models_dir = "~/.pick-face/cache/models"
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[clustering]
+merge_threshold = 0.0                        # SFace 128-D
+                                          # 或 0.55（ArcFace 512-D）
+auto_recluster_min_new = 500                 # 新增 N 张脸自动重聚类
+
+[commercial]
+accept_noncommercial_model_license = false    # AC-9 fail-safe
 ```
 
-### 11.3 本地工作流
+### 6.3 部署工作流
+
+```bash
+# Docker（推荐）
+docker run -d \
+  -p 8000:8000 \
+  -v /mnt/photos:/mnt/photos:ro \
+  -v ~/.pick-face:/data \
+  -e PICK_FACE_HOME=/data \
+  pick-face/web:latest
+
+# 多实例（同一台机器跑两份）
+docker run -d -p 8000:8000 \
+  -v ~/.pick-face:/data \
+  -e PICK_FACE_HOME=/data \
+  pick-face/web:latest               # 实例 1
+
+docker run -d -p 8001:8000 \
+  -v ~/.pick-face-2:/data \
+  -e PICK_FACE_HOME=/data \
+  pick-face/web:latest               # 实例 2（独立 ~/.pick-face-2）
+
+# 裸机
+export PICK_FACE_HOME=~/.pick-face      # 可选；不设也走默认
+uv venv && uv pip install -e ".[web]"
+pick-face-web init                          # 交互式
+pick-face-web serve --host 0.0.0.0 --port 8000
+```
+
+## 7. 前端架构（SPA）
 
 ```
-# 一次性
-uv venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-uv pip install -e ".[dev,heic]"
-
-# 改依赖后
-# 1) 改 pyproject.toml
-# 2) 重新编译 lockfile
-uv pip compile pyproject.toml -o requirements.lock
-# 3) 同步到本地 venv
-uv pip sync requirements.lock
-# 4) 提交 pyproject.toml + requirements.lock
+src/web/                                # Vite + React + TS + shadcn/ui
+├── main.tsx                            # React 入口，挂载 <App/>
+├── App.tsx                             # 路由 + QueryClientProvider + ThemeProvider
+├── routes/
+│   ├── Home.tsx                        # / 入口
+│   ├── Persons.tsx                     # /persons 虚拟相册列表
+│   ├── PersonDetail.tsx                # /persons/:id 瀑布流
+│   ├── PhotoViewer.tsx                 # /persons/:id/photos/:photoId 查看器
+│   └── Settings.tsx                    # /settings 路径配置
+├── components/
+│   ├── ui/                             # shadcn/ui 生成（复制源码，可改）
+│   │   ├── button.tsx
+│   │   ├── dialog.tsx                  # Radix Dialog
+│   │   ├── dropdown-menu.tsx           # Radix DropdownMenu
+│   │   ├── tabs.tsx                    # Radix Tabs
+│   │   ├── toast.tsx                   # Radix Toast + sonner
+│   │   ├── slider.tsx                  # Radix Slider
+│   │   └── ...                         # 见 §7.2
+│   ├── PhotoGrid.tsx                   # 瀑布流（react-photo-album）
+│   ├── FaceViewer.tsx                  # 自研查看器（@use-gesture + framer-motion）
+│   ├── FaceOverlay.tsx                 # 在图上画 bbox
+│   ├── ScanProgressToast.tsx           # SSE 订阅（Radix Toast）
+│   ├── PathManagerDialog.tsx           # 添加/删除扫描路径（Radix Dialog）
+│   ├── ModelPackSelector.tsx           # 模型包切换（Radix DropdownMenu）
+│   └── ThemeToggle.tsx                 # 明暗主题切换
+├── api/
+│   ├── schema.ts                       # openapi-typescript 生成（不要手改）
+│   ├── client.ts                       # 基于 schema.ts 的 fetch 封装
+│   └── hooks.ts                        # TanStack Query 包装（usePersons/usePhotos/...）
+├── lib/
+│   ├── gesture.ts                      # @use-gesture 封装
+│   ├── sse.ts                          # EventSource hook
+│   ├── utils.ts                        # cn() 等 shadcn/ui 公用工具
+│   └── theme.tsx                       # ThemeProvider（class=dark 切换）
+└── styles/
+    └── globals.css                     # Tailwind directives + CSS 变量（HSL token）
 ```
 
-`pre-commit` hook：
-- `uv-lock-check`：CI 与本地若 `requirements.lock` 与 `pyproject.toml` 不一致则失败。
-- `pip-audit --strict`：本地每次提交扫描已知漏洞。
+**核心约定**：
+- 所有按钮 / 弹窗 / 下拉 / Tab / Slider / Toast **必须用** shadcn/ui 的 `components/ui/*` —— 不允许临时 div + Tailwind 复刻（无障碍/键盘支持会丢）
+- 新增 shadcn/ui 组件：`pnpm dlx shadcn@latest add <component>`（写入 `src/web/components/ui/`）
+- 颜色 token（`--background` / `--foreground` / `--primary` / `--muted` ...）走 CSS 变量，**不**直接用 Tailwind class 硬编码 `bg-slate-900`
 
-### 11.4 CI 消费
+### 7.1 关键依赖
 
-- **lint / unit / smoke**：使用 `requirements.lock`（`uv pip sync`）以保证可复现。
-- **GPU job**（`ci/eval.yml`，仅 ubuntu + 自托管 GPU runner）：`uv pip install -e ".[all,gpu-cuda12]"`；不消费 lockfile，因为 CUDA/cuDNN 与 `onnxruntime-gpu` 版本需一一对应，**锁文件跨 GPU runner 难维护**。
-- **缓存键**：`pyproject.toml` + `requirements.lock` 的 SHA256；失效即重建。
-- **矩阵**：见 [06 §7.3](06-engineering-plan.md#7-依赖与-ci)。
+| 依赖 | 用途 |
+|---|---|
+| `react` / `react-dom` | UI 框架 |
+| `typescript` / `vite` | 类型 + 构建 |
+| `tailwindcss` / `postcss` / `autoprefixer` | utility CSS |
+| `class-variance-authority` / `clsx` / `tailwind-merge` | shadcn/ui 配套（`cn()`） |
+| `@radix-ui/react-*` | shadcn/ui 行为原语 |
+| `lucide-react` | 图标 |
+| `react-hook-form` / `@hookform/resolvers` / `zod` | 表单 + 校验（与 Pydantic schema 互译） |
+| `@tanstack/react-query` | 服务端状态缓存 |
+| `zustand` | 本地 UI 状态（查看器缩放级别 / 全屏 / 当前 photoId） |
+| `react-photo-album` | 瀑布流 |
+| `@use-gesture/react` | 手势 |
+| `framer-motion` | 查看器过渡 |
+| `sonner` | Toast（shadcn/ui 推荐） |
+| `openapi-typescript` | 从 FastAPI OpenAPI 生成 TS 类型 |
 
-### 11.5 模型与本地离线镜像
+构建产物：Vite 输出到 `src/pick_face/web/static/`，FastAPI 用 `StaticFiles` mount 到 `/`。
 
-模型**不通过包管理器分发**，避免「几百 MB 模型拖慢 `uv pip install`」。`pick-face init-models` 走 [10 §7 模型下载与离线部署](10-model-stack.md) 与 [11 §3.2 启动时强校验](11-commercial-compliance.md)，但允许管理员预置本地镜像：
+### 7.2 计划引入的 shadcn/ui 组件清单（M6-M9 范围）
 
-| 形态 | 配置 | 用途 |
-|------|------|------|
-| 单一环境变量 | `PICK_FACE_MODEL_DIR=/path/to/models` | 指向已下载的模型根目录 |
-| 配置项 | `[runtime] model_dir = "/srv/models"` | 项目级覆盖环境变量 |
-| 选定 pack | `[runtime] pack = "yunet-mfn"`（默认）/ `"buffalo_l"`（opt-in）| 决定权重文件名 + LicenseClass 驱动的 AC-9 行为 |
-| HTTP 镜像 | `[runtime] model_index_url = "https://internal.corp/models/"` | 内网部署；需 `--allow-network` |
-| 完全离线 | 不配置 + `uv pip install` 走内网 PyPI 镜像 | 全部资源本地化 |
+| 组件 | 用在哪 |
+|---|---|
+| `Button` | 全局 |
+| `Dialog` | 添加扫描路径 / 模型包详情 / EXIF 详情 |
+| `DropdownMenu` | 模型包切换 / 主题切换 / 单张照片"打开人/原图/导出"菜单 |
+| `Tabs` | `/settings` 分页（路径 / 模型 / 阈值） |
+| `Toast` (sonner) | 扫描进度 / 保存成功 / 错误 |
+| `Slider` | 查看器缩放、merge_threshold 调节 |
+| `Switch` | 启用/禁用扫描路径 |
+| `Tooltip` | 人脸 bbox 悬停 |
+| `Sheet` | 查看器右侧 EXIF 抽屉 |
+| `Command` (cmdk) | 全局搜索（按人名 / 路径） |
+| `Skeleton` | 列表加载占位 |
+| `Badge` | 标签（NC-research 警告 / 缩略图分辨率） |
+| `Progress` | 扫描进度条（SSE 推 percent） |
 
-CI 中通过 `actions/cache` 缓存 `model_dir/`，避免每次 job 重新下载。
+### 7.3 主题与暗色模式
 
-### 11.6 发布
+`tailwind.config.ts` 配置 `darkMode: 'class'`。`<html>` 上的 `dark` class 由 `ThemeToggle` 切换。CSS 变量定义在 `src/web/styles/globals.css`：
 
-- **版本号**：SemVer；`0.y.z` 阶段允许小重构；进入 `1.x` 后仅修 bug 与新特性。
-- **tag 触发**：`git tag v0.1.0` → GitHub Actions `release.yml` → `uv build` → `uv publish`（OIDC trusted publishing，不存凭据）。
-- **产物**：`pick-face-0.1.0-py3-none-any.whl` + `pick-face-0.1.0.tar.gz` + `SHA256SUMS`。
-- **签名**：可选 `sigstore` cosign 签名 wheel。
-- **预发布**：`v0.1.0rc1` 走 TestPyPI；正式版推 PyPI。
-- **变更日志**：`CHANGELOG.md` 由 `git-cliff` 或 `towncrier` 自动生成。
+```css
+:root {
+  --background: 0 0% 100%;
+  --foreground: 240 10% 4%;
+  --primary: 240 6% 10%;
+  ...
+}
+.dark {
+  --background: 240 10% 4%;
+  --foreground: 0 0% 98%;
+  ...
+}
+```
 
-### 11.7 不可变约束
+shadcn/ui 组件**全部**用 `bg-background text-foreground` 这类 token class，不写死颜色——换肤/白标靠改 CSS 变量即可。
 
-- **不引入**任何运行时依赖与 InsightFace / ONNX 无关的「重量级」库（PyTorch、TensorFlow）。
-- **不**让 `insightface` 出现在核心 wheel 的 `dependencies`（路线 B 后：`insightface` 是 `pick-face-modelpack-insightface` 插件的依赖）
-- **不**在核心 `requires-python` 中放 `numpy<2` 之类的硬约束；版本兼容性在 `requirements.lock` 中固定。
-- **不**用 `setup.py`；新代码只在 `pyproject.toml` 声明。
-- **不**默认安装 `[gpu]`；用户按硬件显式选择，避免 CPU 机器下载 CUDA 库失败。
-- **包管理器统一使用 `uv`**——文档、CI、发布、pre-commit 钩子中**只**出现 `uv` 子命令（`uv venv` / `uv pip compile` / `uv pip sync` / `uv pip install` / `uv run` / `uv build` / `uv publish` / `uv pip check`），不再使用 `pip-tools` / `pip-compile` / `twine` / `pypa/build` / `pipx` 等工具名。`uv` 生成的 `requirements.lock` 与 `pip install -r` 兼容，作为回退通道。
+## 8. 关键架构决策记录
+
+| ADR | 决策 | 替代 |
+|---|---|---|
+| ADR-1 | FastAPI 单进程 + 异步 task | 多 worker (gunicorn) |
+| ADR-2 | SQLite WAL | Postgres |
+| ADR-3 | asyncio.Queue | Redis Stream |
+| ADR-4 | watchdog + 周期兜底 | 仅 watchdog / 仅轮询 |
+| ADR-5 | 自研 React 查看器 + shadcn/ui 基础组件 | PhotoSwipe / Lightbox / MUI |
+| ADR-6 | 数据目录 vs 扫描根目录解耦 | 数据目录与扫描根目录合并 |
+| ADR-7 | v3 无用户体系（仅运维配置） | 内置 Auth |
+| ADR-8 | 缩略图持久化到 `.pick-face/thumbnails/` | 数据库存二进制 |
+| ADR-9 | shadcn/ui（复制源码）+ Tailwind + Radix | MUI / Chakra / Ant Design |
+
+## 9. 引用与延伸阅读
+
+- [01 PRD](01-product-requirement.md)
+- [02 §栈选型](02-technical-pre-research.md)
+- [04 §聚类流水线](04-algorithm-pipeline.md)
+- [05 §数据与存储](05-data-and-storage.md)
+- [06 §M6+ 里程碑](06-engineering-plan.md)
+- 归档：[M5 CLI §架构](archive/m5-cli/03-architecture-design.md)
