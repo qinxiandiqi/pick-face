@@ -429,7 +429,9 @@ pick-face-web serve --host 0.0.0.0 --port 8000
 
 > **M7 状态**：✅ SPA 骨架 + 四个核心路由 + FaceViewer（键盘/滚轮/拖动/全屏/手势）+ SSE 进度条。
 > **M7.5 状态**：✅ `<FaceOverlay>` bbox 渲染（按 cluster_id 高亮当前人）+ EXIF 侧抽屉（路径/尺寸/人脸列表；EXIF 字段待后端）。
-> **M7.6 状态**：✅ 真实 EXIF — 服务层 `pick_face.service.photo_service.get_exif()` 用 PIL `Image.getexif()` 读 make/model/taken_at/lens/exposure/f_number/iso/focal_length/GPS；`/api/photos/{id}/meta` 响应多出 `exif` 块；`<PhotoMetaSheet>` 抽屉的 EXIF 段从占位切换到真实字段（相机 / 拍摄时间 / 曝光三段 / GPS DMS）。PWA / 全局搜索 / Sonner 封装 / NC-research Badge 仍推迟到 M7.5 余下项。
+> **M7.6 状态**：✅ 真实 EXIF — 服务层 `pick_face.service.photo_service.get_exif()` 用 PIL `Image.getexif()` 读 make/model/taken_at/lens/exposure/f_number/iso/focal_length/GPS；`/api/photos/{id}/meta` 响应多出 `exif` 块；`<PhotoMetaSheet>` 抽屉的 EXIF 段从占位切换到真实字段（相机 / 拍摄时间 / 曝光三段 / GPS DMS）。
+> **M7.7 状态**：✅ `lib/toast.ts` sonner 门面 — 所有 toast 通过 `toast.fromError` / `success` / `warning` 触发；`ScanProgressBanner` 接入。
+> **M7.8 状态**：✅ NC-research Badge — `/api/ready` 响应新增 `active_pack` 块（id / display_name / license_class / license_name / license_spdx / nc_research_acknowledged）；`<ModelPackCard>` 按 license_class 渲染 secondary / destructive / outline Badge，未确认 NC-research 时多挂一个红色 "AC-9 will block scans" Badge 并在 `<SettingsPage>` 挂载时触发一次性 `toast.warning`。PWA / 全局 cmdk 搜索 / Playwright E2E 仍推迟到 M7.5 余下项。
 
 ```
 src/pick_face/web/
@@ -511,9 +513,9 @@ sdist 排除 `web/app/**` 和 `web/static/**`（见 `pyproject.toml`），让 Py
 | `Switch` | 启用 / 禁用扫描路径 |
 | `Progress` | 扫描进度条（SSE 推 percent） |
 | `Skeleton` | 列表加载占位 |
-| `Badge` | Model Tab 占位（M7.5 接入 NC-research 警告） |
+| `Badge` | Model Tab（NC-research 警告 — M7.8） |
 | `Label` / `Input` | 表单字段 |
-| `Toaster` (sonner 占位) | 当前未挂载；M7.5 接 sonner |
+| `Toaster` (sonner 门面) | M7.7 接入；`lib/toast.ts` 收口所有调用方 |
 
 ### 7.3 主题与暗色模式
 

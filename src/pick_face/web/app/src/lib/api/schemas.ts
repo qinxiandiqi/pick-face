@@ -43,11 +43,34 @@ export const HealthResponseSchema = z.object({
 });
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 
+// M7.7 — /api/ready gains an `active_pack` block so the Model tab can
+// render the real pack id + license. license_class drives the
+// NC-research Badge (M7-T-13).
+export const LicenseClassSchema = z.enum([
+  "permissive",
+  "nc-research",
+  "user-supplied",
+]);
+export type LicenseClass = z.infer<typeof LicenseClassSchema>;
+
+export const ActivePackSchema = z.object({
+  id: z.string(),
+  display_name: z.string(),
+  license_class: LicenseClassSchema,
+  license_name: z.string(),
+  license_spdx: z.string(),
+  // True iff the pack is not NC-research, OR the user has explicitly
+  // accepted the NC-research gate. False means AC-9 will block scans.
+  nc_research_acknowledged: z.boolean(),
+});
+export type ActivePack = z.infer<typeof ActivePackSchema>;
+
 export const ReadyResponseSchema = z.object({
   status: z.string(),
   data_dir: z.string().optional(),
   db: z.string().optional(),
   jobs: z.number().int().nonnegative().optional(),
+  active_pack: ActivePackSchema.nullable().optional(),
 });
 export type ReadyResponse = z.infer<typeof ReadyResponseSchema>;
 

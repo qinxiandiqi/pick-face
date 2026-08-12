@@ -74,7 +74,7 @@ v2.x（M0–M5）已经把"CLI 工具 + 算法内核 + Model Pack 架构"做完�
 | M7-T-10 | 浏览器 E2E 测试（Playwright）⏸️ M7.5 | M7-T-1 |
 | M7-T-11 | `Toast` (sonner) 错误反馈统一封装 ✅ M7.7（`lib/toast.ts` 门面 + `toast.fromError` 收口） | M6-T-11b |
 | M7-T-12 | 全局 `Command` (cmdk) 搜索（按人名 / 路径 / EXIF）⏸️ M7.5 | M6-T-11b |
-| M7-T-13 | `Badge` 标注 NC-research 模型包警告 ⏸️ M7.5 | M6-T-11b |
+| M7-T-13 | `Badge` 标注 NC-research 模型包警告 ✅ M7.8（`/api/ready.active_pack` + `<ModelPackCard>` 三态 Badge + 未确认警告 toast） | M6-T-11b |
 
 ### 2.2 验收
 

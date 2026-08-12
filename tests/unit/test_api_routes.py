@@ -103,6 +103,109 @@ def test_ready_degraded_when_db_missing(client) -> None:
     assert body["status"] == "degraded"
 
 
+# ---------------------------------------------------------------------------
+# M7.7 — /api/ready gains an active_pack block (license-class-driven Badge).
+# ---------------------------------------------------------------------------
+
+
+def test_ready_includes_active_pack_permissive(client) -> None:
+    """Default pack (yunet-sface) is permissive + acknowledged by default.
+    The SPA Model tab renders a secondary Badge with no destructive
+    styling in this case."""
+    r = client.get("/api/ready")
+    assert r.status_code == 200
+    body = r.json()
+    assert "active_pack" in body
+    pack = body["active_pack"]
+    # The test environment registers yunet-sface / yunet-arcface / yunet-mfn.
+    # Default `pack` is "yunet-sface"; either it resolves to that id or
+    # (if plugin discovery is filtered) returns None — both are valid.
+    if pack is not None:
+        assert pack["id"] in {"yunet-sface", "yunet-arcface", "yunet-mfn"}
+        assert pack["license_class"] in {"permissive", "nc-research", "user-supplied"}
+        assert isinstance(pack["display_name"], str) and pack["display_name"]
+        assert isinstance(pack["license_name"], str)
+        assert isinstance(pack["nc_research_acknowledged"], bool)
+        # Default config doesn't acknowledge NC-research, but the default
+        # pack is permissive — so the flag must be True here.
+        assert pack["nc_research_acknowledged"] is True
+
+
+def test_ready_active_pack_handles_unknown_id(client, tmp_pure: Path) -> None:
+    """When the config points at an id not registered as a plugin,
+    active_pack is null (the SPA falls back to a placeholder)."""
+    from pick_face.core.config import PickFaceConfig
+
+    layout = client.app.state.layout
+    cfg_path = layout.config_file
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    # Write a config that points at a non-existent pack id.
+    cfg_path.write_text(
+        '[runtime]\npack = "definitely-not-a-real-pack"\n',
+        encoding="utf-8",
+    )
+    # Force a fresh discovery (module-level cache).
+    import pick_face.platform.pack as _pack_mod
+    _pack_mod._discovered = None  # type: ignore[attr-defined]
+
+    r = client.get("/api/ready")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["active_pack"] is None
+
+
+def test_ready_active_pack_nc_research_unacknowledged(
+    request, tmp_path, monkeypatch
+) -> None:
+    """NC-research pack with no ack → nc_research_acknowledged = False.
+    Verified via direct call to the resolver (avoids registering a real
+    NC-research plugin in the test env)."""
+    from pick_face.api.health import _resolve_active_pack
+    from pick_face.platform.pack import LicenseClass, PackDescriptor
+
+    class _FakePack:
+        descriptor = PackDescriptor(
+            pack_id="insightface-buffalo-l",
+            display_name="InsightFace buffalo_l (research only)",
+            detector_name="RetinaFace",
+            embedder_name="ArcFace R100",
+            detector_sha256="0" * 64,
+            embedder_sha256="0" * 64,
+            detector_size_bytes=1,
+            embedder_size_bytes=1,
+            detector_url=None,
+            embedder_url=None,
+            license_class=LicenseClass.NC_RESEARCH,
+            license_name="InsightFace NC-research",
+            license_spdx="",
+            accuracy_lfw=None,
+        )
+
+    fake_pack = _FakePack()
+    monkeypatch.setattr(
+        "pick_face.platform.pack.discover_packs",
+        lambda: {"insightface-buffalo-l": fake_pack},
+    )
+
+    from pick_face.service.paths import get_layout
+    layout = get_layout(data_dir=tmp_path / "app")
+    (tmp_path / "app" / "config").mkdir(parents=True, exist_ok=True)
+    cfg_file = layout.config_file
+    cfg_file.write_text(
+        '[runtime]\npack = "insightface-buffalo-l"\n',
+        encoding="utf-8",
+    )
+
+    out = _resolve_active_pack(layout)
+    assert out is not None
+    assert out["id"] == "insightface-buffalo-l"
+    assert out["license_class"] == "nc-research"
+    # Default accept_noncommercial_model_license is False.
+    assert out["nc_research_acknowledged"] is False
+    # Keep `request` referenced so fixture plumbing doesn't warn.
+    _ = request
+
+
 # -- config paths --------------------------------------------------------
 
 

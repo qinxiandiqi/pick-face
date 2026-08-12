@@ -492,6 +492,66 @@ Regression: 396 pytest passing (unchanged), 45 Vitest passing (+8),
 | Frontend | `src/pick_face/web/app/src/lib/toast.ts` (new), `src/pick_face/web/app/src/lib/toast.test.ts` (new), `src/pick_face/web/app/src/components/layout/ScanProgressBanner.tsx` |
 | Docs | `CHANGELOG.md`, `docs/03-architecture-design.md`, `docs/06-engineering-plan.md` |
 
+### M7.8 — NC-research Badge on Settings → Model tab (M7-T-13)
+
+The Model tab used to hardcode `<Badge>yunet-sface</Badge>`. It now
+consumes the live `active_pack` block from `/api/ready` and renders
+a license-class-driven Badge.
+
+#### What's new
+
+- **`/api/ready` extended** — response gains an `active_pack` block
+  (`id`, `display_name`, `license_class`, `license_name`,
+  `license_spdx`, `nc_research_acknowledged`). `null` when the
+  configured pack id doesn't resolve to an installed plugin.
+- **`pick_face.api.health._resolve_active_pack(layout)`** — loads
+  config, calls `discover_packs()`, looks up `effective_pack_id()`,
+  returns `None` on any miss. Honors
+  `[runtime] accept_noncommercial_model_license` for the
+  `nc_research_acknowledged` flag (the AC-9 gate).
+- **`<ModelPackCard>`** — three Badge variants by `license_class`:
+  - `permissive` → secondary, no warning.
+  - `user-supplied` → outline, neutral.
+  - `nc-research` → destructive red.
+  Adds an extra destructive `"AC-9 will block scans"` Badge when
+  `nc_research_acknowledged === false`. Falls back to a soft
+  "No installed model pack detected" placeholder when `pack` is null.
+- **`<SettingsPage>`** — wires the card to `useReadyQuery().active_pack`
+  and fires a one-time `toast.warning(...)` on mount (guarded by a
+  `useRef`) when the gate is unacknowledged, so AC-9 cannot be
+  silently bypassed. Both scan buttons route mutation errors through
+  `toast.fromError`.
+- **zod mirror** — `LicenseClassSchema`, `ActivePackSchema`, and
+  `ReadyResponseSchema.active_pack` added to `lib/api/schemas.ts`.
+
+#### Tests added
+
+- 3 pytest cases in `tests/unit/test_api_routes.py`:
+  `test_ready_includes_active_pack_permissive`,
+  `test_ready_active_pack_handles_unknown_id`,
+  `test_ready_active_pack_nc_research_unacknowledged` (uses
+  `monkeypatch.setattr("pick_face.platform.pack.discover_packs", ...)`
+  to inject a fake NC-research `PackDescriptor` without registering
+  a real plugin in the test env).
+- 6 Vitest cases in
+  `src/pick_face/web/app/src/components/settings/ModelPackCard.test.tsx`
+  covering: loading skeleton, unknown-pack placeholder, permissive
+  pack (secondary Badge), NC-research acked (destructive Badge, no
+  AC-9 warning), NC-research unacked (destructive Badge **plus** AC-9
+  warning Badge), user-supplied pack (outline Badge).
+
+Regression: 399 pytest passing (+3), 51 Vitest passing (+6),
+`pnpm build` clean.
+
+#### Files touched
+
+| Category | Modified |
+|---|---|
+| Backend | `src/pick_face/api/health.py` (`_resolve_active_pack` + `/ready` adds `active_pack`) |
+| Frontend | `src/pick_face/web/app/src/lib/api/schemas.ts` (`LicenseClassSchema`, `ActivePackSchema`), `src/pick_face/web/app/src/components/settings/ModelPackCard.tsx` (new), `src/pick_face/web/app/src/components/settings/ModelPackCard.test.tsx` (new), `src/pick_face/web/app/src/pages/SettingsPage.tsx` (wires card + AC-9 toast) |
+| Tests | `tests/unit/test_api_routes.py` (+3) |
+| Docs | `CHANGELOG.md`, `docs/03-architecture-design.md` (§1.4 status, §7.2 table), `docs/06-engineering-plan.md` (§2.1 M7-T-13) |
+
 ---
 
 ## [2.1.0] - 2026-08-10 — High-precision tier (yunet-arcface)

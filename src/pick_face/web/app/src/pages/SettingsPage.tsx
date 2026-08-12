@@ -3,25 +3,47 @@
 // Paths  : whitelist CRUD via PathList + PathAddDialog (rhf + zod).
 // Scan   : start a new scan, view job status. Real SSE progress lives in
 //          the global ScanProgressBanner (rendered by AppShell).
-// Model  : placeholder card listing the active pack from /api/health.
-//          NC-research Badge (M7-T-13) deferred to M7.5.
+// Model  : active pack + license-class Badge (M7-T-13) via
+//          <ModelPackCard>, fed by /api/ready.active_pack.
 
 import * as React from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PathList } from "@/components/settings/PathList";
 import { PathAddDialog } from "@/components/settings/PathAddDialog";
+import { ModelPackCard } from "@/components/settings/ModelPackCard";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { useReadyQuery, useStartScanMutation } from "@/lib/api/hooks";
+import { toast } from "@/lib/toast";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function SettingsPage(): React.JSX.Element {
   const [addOpen, setAddOpen] = useState(false);
   const startScan = useStartScanMutation();
   const { data: ready } = useReadyQuery();
+
+  // One-time toast on mount when the active pack is NC-research and
+  // the user hasn't acknowledged the gate — silent re-mount shouldn't
+  // re-fire it.
+  const warnedRef = useRef(false);
+  useEffect(() => {
+    if (warnedRef.current) return;
+    if (!ready?.active_pack) return;
+    const pack = ready.active_pack;
+    if (pack.license_class === "nc-research" && !pack.nc_research_acknowledged) {
+      warnedRef.current = true;
+      toast.warning(
+        `${pack.id} is non-commercial-research licensed.`,
+        {
+          description:
+            "Set [runtime] accept_noncommercial_model_license = true in pick-face.toml, then restart.",
+          duration: 0,
+        },
+      );
+    }
+  }, [ready?.active_pack]);
 
   return (
     <div className="container mx-auto p-6">
@@ -71,14 +93,22 @@ export function SettingsPage(): React.JSX.Element {
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2">
               <Button
-                onClick={() => startScan.mutate("incremental")}
+                onClick={() =>
+                  startScan.mutate("incremental", {
+                    onError: (e) => toast.fromError(e, "Could not start scan"),
+                  })
+                }
                 disabled={startScan.isPending}
               >
                 Start incremental scan
               </Button>
               <Button
                 variant="outline"
-                onClick={() => startScan.mutate("full")}
+                onClick={() =>
+                  startScan.mutate("full", {
+                    onError: (e) => toast.fromError(e, "Could not start scan"),
+                  })
+                }
                 disabled={startScan.isPending}
               >
                 Start full scan
@@ -124,11 +154,8 @@ export function SettingsPage(): React.JSX.Element {
                 from the CLI; restart the service afterwards.
               </CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary">yunet-sface</Badge>
-              <span className="text-sm text-muted-foreground">
-                MIT · 128-D · Pi 3B friendly (M7.5: NC-research Badge here)
-              </span>
+            <CardContent>
+              <ModelPackCard pack={ready?.active_pack ?? null} isLoading={!ready} />
             </CardContent>
           </Card>
         </TabsContent>
