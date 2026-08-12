@@ -230,3 +230,86 @@ def test_photo_404(client) -> None:
 def test_photo_meta_404(client) -> None:
     r = client.get("/api/photos/9999/meta")
     assert r.status_code == 404
+
+
+def test_photo_meta_includes_faces(client, tmp_pure: Path) -> None:
+    """M7.5 — /api/photos/{id}/meta returns bbox + cluster_id + scores.
+
+    The SPA viewer overlay (M7-T-6) draws SVG rectangles over the image
+    based on this payload. Without faces, the overlay is a no-op (which
+    is why this endpoint must *return* faces, not 404 them).
+    """
+    # Seed a source row + two faces with known bboxes.
+    from pick_face.store.index import open_db
+
+    layout = client.app.state.layout
+    img_path = tmp_pure / "x.jpg"
+    img_path.write_bytes(b"\xff\xd8\xff\xe0fake")  # claimed JPEG bytes
+    conn = open_db(layout.db_path)
+    cur = conn.execute(
+        "INSERT INTO source(path, rel_path, size, mtime, hash, status, "
+        "                  first_seen, last_seen) "
+        "VALUES (?, ?, ?, ?, ?, 'ok', 0, 0)",
+        (str(img_path), "x.jpg", 12, 1.0, "abc"),
+    )
+    photo_id = int(cur.lastrowid)
+    conn.execute(
+        "INSERT INTO face(source_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, "
+        "                  cluster_id, det_score, quality, embedding, model_version) "
+        "VALUES (?, 10, 20, 110, 220, 7, 0.93, 0.81, ?, 'test@sha')",
+        (photo_id, b"\x00" * 16),
+    )
+    conn.execute(
+        "INSERT INTO face(source_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, "
+        "                  cluster_id, det_score, quality, embedding, model_version) "
+        "VALUES (?, 200, 30, 350, 180, NULL, 0.55, 0.40, ?, 'test@sha')",
+        (photo_id, b"\x00" * 16),
+    )
+    conn.commit()
+    conn.close()
+
+    r = client.get(f"/api/photos/{photo_id}/meta")
+    assert r.status_code == 200, r.text
+    j = r.json()
+    # Backwards-compat fields still present.
+    assert j["id"] == photo_id
+    assert j["path"] == str(img_path)
+    assert j["mtime"] == 1.0
+    assert j["size"] == 12
+    assert j["content_hash"] == "abc"
+    # New M7.5 fields.
+    assert "natural_width" in j
+    assert "natural_height" in j
+    assert isinstance(j["faces"], list)
+    assert len(j["faces"]) == 2
+    face_with_cluster = next(f for f in j["faces"] if f["cluster_id"] is not None)
+    assert face_with_cluster["bbox"] == [10.0, 20.0, 110.0, 220.0]
+    assert face_with_cluster["cluster_id"] == 7
+    assert face_with_cluster["det_score"] == 0.93
+    assert face_with_cluster["quality"] == 0.81
+    face_no_cluster = next(f for f in j["faces"] if f["cluster_id"] is None)
+    assert face_no_cluster["bbox"] == [200.0, 30.0, 350.0, 180.0]
+    assert face_no_cluster["cluster_id"] is None
+
+
+def test_photo_meta_empty_faces(client, tmp_pure: Path) -> None:
+    """A photo with no faces yet returns faces=[] (not 404)."""
+    from pick_face.store.index import open_db
+
+    layout = client.app.state.layout
+    img_path = tmp_pure / "y.jpg"
+    img_path.write_bytes(b"\xff\xd8\xff\xe0fake")
+    conn = open_db(layout.db_path)
+    cur = conn.execute(
+        "INSERT INTO source(path, rel_path, size, mtime, hash, status, "
+        "                  first_seen, last_seen) "
+        "VALUES (?, ?, ?, ?, ?, 'ok', 0, 0)",
+        (str(img_path), "y.jpg", 12, 1.0, "def"),
+    )
+    photo_id = int(cur.lastrowid)
+    conn.commit()
+    conn.close()
+
+    r = client.get(f"/api/photos/{photo_id}/meta")
+    assert r.status_code == 200
+    assert r.json()["faces"] == []

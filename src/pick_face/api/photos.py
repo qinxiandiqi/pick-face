@@ -72,16 +72,62 @@ def get_photo_meta(
     photo_id: int,
     svc: PhotoService = Depends(get_photo_service),
 ) -> dict[str, Any]:
+    """Photo metadata + face list — used by the SPA viewer overlay.
+
+    Response shape::
+
+        {
+          "id": int,
+          "path": str,
+          "mtime": float,          # epoch seconds
+          "size": int,             # bytes
+          "content_hash": str,     # hex
+          "natural_width": int | null,   # for SVG viewBox
+          "natural_height": int | null,
+          "faces": [
+            {
+              "id": int,
+              "bbox": [x1, y1, x2, y2] | null,  # pixel space
+              "cluster_id": int | null,
+              "det_score": float | null,
+              "quality": float | null
+            },
+            ...
+          ]
+        }
+
+    M7.5: extended to include faces for the SVG bbox overlay (M7-T-6)
+    and the PersonDetailPage EXIF side-sheet (M7-T-8).
+    """
     try:
-        rec = svc.get_photo(photo_id)
+        meta = svc.get_photo_metadata(photo_id)
     except PhotoNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
-        "id": rec.id,
-        "path": str(rec.path),
-        "mtime": rec.mtime,
-        "size": rec.size,
-        "content_hash": rec.content_hash,
+        "id": meta.id,
+        "path": str(meta.path),
+        "mtime": meta.mtime,
+        "size": meta.size,
+        "content_hash": meta.content_hash,
+        "natural_width": meta.natural_width,
+        "natural_height": meta.natural_height,
+        "faces": [
+            {
+                "id": f.id,
+                "bbox": (
+                    [f.bbox_x1, f.bbox_y1, f.bbox_x2, f.bbox_y2]
+                    if f.bbox_x1 is not None
+                    and f.bbox_y1 is not None
+                    and f.bbox_x2 is not None
+                    and f.bbox_y2 is not None
+                    else None
+                ),
+                "cluster_id": f.cluster_id,
+                "det_score": f.det_score,
+                "quality": f.quality,
+            }
+            for f in meta.faces
+        ],
     }
 
 

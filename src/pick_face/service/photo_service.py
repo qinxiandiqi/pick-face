@@ -47,6 +47,45 @@ class PhotoRecord:
     content_hash: str
 
 
+@dataclass
+class FaceRecord:
+    """A face detected on a photo — bbox in pixel space + the cluster it
+    belongs to (or ``None`` if not yet clustered).
+
+    Used by the SPA viewer overlay (M7-T-6) and the EXIF side-sheet
+    (M7-T-8). Coordinates are in the original image's pixel space.
+    """
+
+    id: int
+    bbox_x1: float | None
+    bbox_y1: float | None
+    bbox_x2: float | None
+    bbox_y2: float | None
+    cluster_id: int | None
+    det_score: float | None
+    quality: float | None
+
+
+@dataclass
+class PhotoMetadata:
+    """Composite metadata returned by ``/api/photos/{id}/meta``.
+
+    Includes the photo's source row (path, mtime, size, hash) plus
+    natural dimensions (for SVG viewBox) and every face detected on
+    the photo. ``faces`` is empty (not error) for photos with no
+    detections yet — that's the pre-scan state.
+    """
+
+    id: int
+    path: Path
+    mtime: float
+    size: int
+    content_hash: str
+    natural_width: int | None
+    natural_height: int | None
+    faces: list[FaceRecord]
+
+
 class PhotoNotFoundError(LookupError):
     """The photo_id isn't in the database or is soft-deleted."""
 
@@ -93,6 +132,64 @@ class PhotoService:
             )
         finally:
             conn.close()
+
+    def get_photo_metadata(self, photo_id: int) -> "PhotoMetadata":
+        """Return photo row + faces (bbox + cluster_id + scores).
+
+        Used by the SPA viewer to draw face bounding boxes on the image.
+        ``natural_width`` / ``natural_height`` come from PIL — needed for
+        the SVG overlay to map pixel-space bboxes to viewBox-space.
+        """
+        from PIL import Image as _PILImage
+
+        rec = self.get_photo(photo_id)
+        natural_w: int | None = None
+        natural_h: int | None = None
+        if rec.path.exists():
+            try:
+                with _PILImage.open(rec.path) as im:
+                    natural_w, natural_h = im.size
+            except (OSError, _PILImage.DecompressionBombError):
+                natural_w = natural_h = None
+
+        conn = open_db(self._layout.db_path)
+        try:
+            cur = conn.execute(
+                """
+                SELECT id, bbox_x1, bbox_y1, bbox_x2, bbox_y2,
+                       cluster_id, det_score, quality
+                FROM face
+                WHERE source_id = ?
+                ORDER BY id ASC
+                """,
+                (photo_id,),
+            )
+            faces = [
+                FaceRecord(
+                    id=int(r[0]),
+                    bbox_x1=float(r[1]) if r[1] is not None else None,
+                    bbox_y1=float(r[2]) if r[2] is not None else None,
+                    bbox_x2=float(r[3]) if r[3] is not None else None,
+                    bbox_y2=float(r[4]) if r[4] is not None else None,
+                    cluster_id=int(r[5]) if r[5] is not None else None,
+                    det_score=float(r[6]) if r[6] is not None else None,
+                    quality=float(r[7]) if r[7] is not None else None,
+                )
+                for r in cur.fetchall()
+            ]
+        finally:
+            conn.close()
+
+        return PhotoMetadata(
+            id=rec.id,
+            path=rec.path,
+            mtime=rec.mtime,
+            size=rec.size,
+            content_hash=rec.content_hash,
+            natural_width=natural_w,
+            natural_height=natural_h,
+            faces=faces,
+        )
 
     def get_photo_path(self, photo_id: int) -> Path:
         """Resolve ``photo_id`` to an on-disk path **after** whitelist check.

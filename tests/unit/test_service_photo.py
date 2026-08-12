@@ -162,3 +162,58 @@ def test_get_photo_path_under_whitelist_succeeds(tmp_pure: Path) -> None:
     pid = _insert_source(layout, p)
     svc = PhotoService(layout)
     assert svc.get_photo_path(pid) == p
+
+
+def test_get_photo_metadata_includes_natural_dim_and_faces(tmp_pure: Path) -> None:
+    """M7.5 — get_photo_metadata returns natural W/H + every face row."""
+    from pick_face.service.photo_service import PhotoMetadata, PhotoService
+    from pick_face.store.index import open_db
+
+    layout = _layout(tmp_pure)
+    p = tmp_pure / "p.jpg"
+    _make_jpg(p)
+    pid = _insert_source(layout, p, content_hash="z" * 16)
+    conn = open_db(layout.db_path)
+    conn.execute(
+        "INSERT INTO face(source_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, "
+        "                  cluster_id, det_score, quality, embedding, model_version) "
+        "VALUES (?, 5, 10, 50, 60, 11, 0.9, 0.7, ?, \"test@x\")",
+        (pid, b'placeholder-embedding-bytes-1234'),
+    )
+    conn.commit()
+    conn.close()
+
+    meta = PhotoService(layout).get_photo_metadata(pid)
+    assert isinstance(meta, PhotoMetadata)
+    assert meta.id == pid
+    assert meta.path == p
+    assert meta.natural_width == 640
+    assert meta.natural_height == 480
+    assert len(meta.faces) == 1
+    f = meta.faces[0]
+    assert f.bbox_x1 == 5.0 and f.bbox_y1 == 10.0
+    assert f.bbox_x2 == 50.0 and f.bbox_y2 == 60.0
+    assert f.cluster_id == 11
+    assert f.det_score == 0.9
+    assert f.quality == 0.7
+
+
+def test_get_photo_metadata_no_faces(tmp_pure: Path) -> None:
+    """M7.5 — empty faces list, not an error."""
+    from pick_face.service.photo_service import PhotoService
+
+    layout = _layout(tmp_pure)
+    p = tmp_pure / "p.jpg"
+    _make_jpg(p)
+    pid = _insert_source(layout, p, content_hash="a" * 16)
+    meta = PhotoService(layout).get_photo_metadata(pid)
+    assert meta.faces == []
+    assert meta.natural_width == 640
+
+
+def test_get_photo_metadata_404(tmp_pure: Path) -> None:
+    from pick_face.service.photo_service import PhotoNotFoundError, PhotoService
+
+    layout = _layout(tmp_pure)
+    with pytest.raises(PhotoNotFoundError):
+        PhotoService(layout).get_photo_metadata(999)
