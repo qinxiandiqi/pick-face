@@ -198,21 +198,38 @@ the full matrix + Docker perf baselines.
 ## Development
 
 ```bash
-# Backend
-uv pip install -e ".[dev,docs,web]"
-ruff check src tests
-pytest -q                                 # 288+ unit tests
+# Backend (FastAPI + service layer + workers)
+uv sync --extra dev --extra docs --extra web --frozen
+uv run ruff check src tests
+uv run pytest -q                       # 380+ unit + acceptance tests
 
-# Frontend (SPA, React + Vite + TS + shadcn/ui)
-cd src/web
-pnpm install
-pnpm run dev          # http://localhost:5173 (proxies API to 8000)
-pnpm run gen-api      # OpenAPI → TypeScript client
-pnpm dlx shadcn@latest add dialog  # 添加新的 shadcn/ui 组件
+# Frontend (SPA — Vite + React + TypeScript + Tailwind + shadcn/ui)
+# Path: src/pick_face/web/app/. The build output goes to src/pick_face/web/static/
+# which FastAPI mounts at `/` (see src/pick_face/api/app.py:84-92).
+cd src/pick_face/web/app
+pnpm install                           # one-time; lockfile is committed
+pnpm dev                               # http://localhost:5173, proxies /api → :8000
+pnpm build                             # writes ../static/ (consumed by `uv build`)
+pnpm test                              # Vitest + @testing-library/react (jsdom)
 
 # Docs site
-mkdocs serve         # http://localhost:8001
+uv run mkdocs serve                    # http://localhost:8001
 ```
+
+### Frontend development notes
+
+- **API base URL**: defaults to `/api` (same-origin). For direct cross-port access during
+  development, set `VITE_API_BASE=http://localhost:8000/api` in `.env.local` — useful
+  when SSE buffers through the Vite proxy.
+- **No codegen**: client-side TypeScript types are hand-written zod schemas in
+  `src/pick_face/web/app/src/lib/api/schemas.ts` (14 endpoints, mirrors Pydantic).
+  We re-evaluate codegen at M9 when endpoint count triples.
+- **Adding shadcn/ui components**: copy the source from [shadcn/ui](https://ui.shadcn.com/)
+  into `src/pick_face/web/app/src/components/ui/`. Never run `pnpm add shadcn` —
+  we vendor the primitives so they can be tweaked freely.
+- **Wheel build**: `uv build` packages `web/static/` automatically. The CI pipeline
+  (`frontend-build` job in `.github/workflows/ci.yml`) runs `pnpm build` before
+  `uv build` so the wheel always carries the latest SPA bundle.
 
 ---
 

@@ -279,6 +279,71 @@ Before M6: ~301. M6 delta: **+80 tests**.
   (`data/jobs/scan-<uuid>.json`) becomes a SQLite-backed `jobs` table
   when multi-process uvicorn workers land in M8.
 
+### M7 — Web SPA + image viewer (M6 scaffold completion)
+
+The M7 milestone ships the **complete M6 SPA scaffold + photo viewer**.
+The backend was already service-ready in M6; M7 adds a real Vite + React
++ TypeScript SPA at `src/pick_face/web/app/`, a working `FaceViewer`
+with keyboard / wheel / drag / fullscreen / touch gestures, SSE-driven
+scan progress, and CI / release pipelines that build the SPA into the
+wheel.
+
+#### What's new
+
+- **SPA scaffold** — Vite 5 + React 18.3 + TypeScript 5.6 + Tailwind v3
+  + shadcn/ui (vendored primitives: Button, Card, Input, Dialog, Skeleton,
+  Tabs, Switch, Progress, Label, Badge, Toaster). `pnpm-lock.yaml` is
+  committed for reproducible CI installs.
+- **Routing** — `createBrowserRouter` with four routes: `/` → `/persons`,
+  `/persons` (waterfall grid), `/persons/:id` (per-person waterfall +
+  FaceViewer via `?photo=X` deep link), `/settings` (Paths / Scan / Model
+  tabs), plus a 404.
+- **API client** — 14 endpoints hand-typed with `zod` schemas
+  (`src/pick_face/web/app/src/lib/api/schemas.ts`) wrapped in TanStack
+  Query hooks. Image bytes flow through the browser natively (Range
+  requests handled by FastAPI's `StreamingResponse`).
+- **`<FaceViewer>`** — keyboard (`←/→/Space/PageUp/PageDown/+/-/0/f/Esc`),
+  mouse wheel zoom around the cursor, drag pan with edge clamping,
+  double-click toggles fit ↔ 2×, fullscreen via the browser Fullscreen
+  API, touch pinch / swipe / tap via `@use-gesture/react`. URL state:
+  `/persons/:id?photo=N` opens the viewer at photo N — back button closes
+  it without losing scroll position. Lazy-loaded so the gesture handler
+  cost is only paid on the detail route.
+- **`<FaceOverlay>`** — landed as a no-op SVG component (M7.5 fills
+  bbox drawing once `/api/photos/{id}/metadata` exposes face rectangles).
+- **SSE scan progress** — `<ScanProgressBanner>` polls the active scan
+  job every 2 s and opens a typed EventSource (`lib/sse.ts`) when one is
+  RUNNING. Renders shadcn `Progress` with `processed/total`. On
+  terminal events, toasts (placeholder — M7.5 wires sonner).
+- **CI** — new `frontend-build` job runs `pnpm install --frozen-lockfile`
+  and `pnpm build` before `unit` and the smoke matrix. `frontend-test`
+  job runs Vitest. `release.yml` runs `pnpm build` before `uv build` so
+  the published wheel always ships the SPA bundle. `pyproject.toml`
+  excludes `web/app/**` and `web/static/**` from sdist (sdist stays
+  source-only; wheel automatically picks up `web/static/`).
+- **Test coverage** — 19 Vitest cases (component + store + helpers) +
+  3 pytest cases (`tests/unit/test_vite_build_artifacts.py`) guarding
+  that `web/static/index.html` exists post-build and carries no `.onnx`.
+
+#### Deferred to M7.5
+
+- `<FaceOverlay>` bbox rendering (needs `/api/photos/{id}/metadata`).
+- EXIF side-sheet on `/persons/:id`.
+- PWA manifest + service worker.
+- Playwright E2E.
+- Sonner-based toast wrapper, `cmdk` global search, NC-research `Badge`
+  on the Model tab.
+
+#### Files touched
+
+| Category | New | Modified |
+|---|---|---|
+| Source | `src/pick_face/web/app/**` (~40 files) | `src/pick_face/web/__init__.py` |
+| Workflows | — | `.github/workflows/{ci,release}.yml` |
+| Build | — | `pyproject.toml`, `.gitignore` |
+| Tests | `tests/unit/test_vite_build_artifacts.py` | `tests/unit/test_vite_build_artifacts.py` |
+| Docs | — | `README.md`, `docs/03-architecture-design.md`, `docs/06-engineering-plan.md`, `CHANGELOG.md` |
+
 ---
 
 ## [2.1.0] - 2026-08-10 — High-precision tier (yunet-arcface)

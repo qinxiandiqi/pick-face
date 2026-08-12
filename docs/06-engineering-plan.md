@@ -37,13 +37,13 @@ v2.x（M0–M5）已经把"CLI 工具 + 算法内核 + Model Pack 架构"做完�
 | M6-T-8 | `service/photo_service.py` 缩略图生成 | M6-T-5 |
 | M6-T-9 | `api/photos.py` 缩略图 + 原图流（HTTP Range） | M6-T-8 |
 | M6-T-10 | `api/persons.py` 虚拟相册 list | M6-T-7 |
-| M6-T-11 | SPA 骨架（Vite + React + TS + shadcn/ui + Tailwind 初始化） | — |
-| M6-T-11a | shadcn/ui 配置（`components.json`、`tailwind.config.ts`、CSS 变量、`<ThemeProvider>`） | M6-T-11 |
-| M6-T-11b | 引入基础 shadcn/ui 组件：`Button` `Card` `Input` `Dialog` `Toast` `Skeleton` `Tabs` `Switch` `Slider` `DropdownMenu` `Tooltip` `Badge` `Progress` `Sheet` `Command` | M6-T-11a |
-| M6-T-12 | SPA `/settings` 路径配置 UI（`Tabs` + `Dialog` + `Switch` + `react-hook-form` + `zod`） | M6-T-3 |
-| M6-T-13 | SPA `/persons` 瀑布流（react-photo-album + `Skeleton` 占位） | M6-T-10 |
-| M6-T-14 | SPA `/persons/:id` 单人瀑布流 + `Sheet` EXIF 抽屉 | M6-T-13 |
-| M6-T-15 | OpenAPI → TypeScript 自动生成 | M6-T-1 |
+| M6-T-11 | SPA 骨架（Vite + React + TS + shadcn/ui + Tailwind 初始化） ✅ M7 | — |
+| M6-T-11a | shadcn/ui 配置（`components.json`、`tailwind.config.ts`、CSS 变量、`<ThemeProvider>`） ✅ M7 | M6-T-11 |
+| M6-T-11b | 引入基础 shadcn/ui 组件：`Button` `Card` `Input` `Dialog` `Toast` `Skeleton` `Tabs` `Switch` `Slider` `DropdownMenu` `Tooltip` `Badge` `Progress` `Sheet` `Command` ✅ M7 | M6-T-11a |
+| M6-T-12 | SPA `/settings` 路径配置 UI（`Tabs` + `Dialog` + `Switch` + `react-hook-form` + `zod`） ✅ M7 | M6-T-3 |
+| M6-T-13 | SPA `/persons` 瀑布流（react-photo-album + `Skeleton` 占位） ✅ M7 | M6-T-10 |
+| M6-T-14 | SPA `/persons/:id` 单人瀑布流 + `Sheet` EXIF 抽屉 ⏸️ 部分（Sheet 推迟到 M7.5；详情页 + 查看器已交付） | M6-T-13 |
+| M6-T-15 | 手写 TypeScript API 客户端（替代 OpenAPI 自动生成；14 个端点 + zod schemas） ✅ M7 | M6-T-1 |
 | M6-T-16 | Docker 多阶段构建 | M6-T-1 |
 
 ### 1.2 验收
@@ -62,19 +62,19 @@ v2.x（M0–M5）已经把"CLI 工具 + 算法内核 + Model Pack 架构"做完�
 
 | 任务 ID | 内容 | 依赖 |
 |---|---|---|
-| M7-T-1 | `<FaceViewer>` 组件：键盘 ←/→/Space | M6-T-14 |
-| M7-T-2 | `<FaceViewer>` 鼠标滚轮缩放 + 双击 100%↔fit | M7-T-1 |
-| M7-T-3 | `<FaceViewer>` 拖动 pan | M7-T-2 |
-| M7-T-4 | `<FaceViewer>` 全屏切换（F / Esc） | M7-T-2 |
-| M7-T-5 | `@use-gesture/react` 触摸手势（pinch、swipe、tap） | M7-T-2 |
-| M7-T-6 | `<FaceOverlay>` 在图上画 bbox | M7-T-1 |
-| M7-T-7 | `api/photos/{id}/metadata` EXIF + 路径 | — |
-| M7-T-8 | 信息层抽屉（EXIF、文件名、原图路径）| M7-T-7 |
-| M7-T-9 | PWA manifest + service worker | M7-T-1 |
-| M7-T-10 | 浏览器 E2E 测试（Playwright） | M7-T-1 |
-| M7-T-11 | `Toast` (sonner) 错误反馈统一封装 | M6-T-11b |
-| M7-T-12 | 全局 `Command` (cmdk) 搜索（按人名 / 路径 / EXIF） | M6-T-11b |
-| M7-T-13 | `Badge` 标注 NC-research 模型包警告 | M6-T-11b |
+| M7-T-1 | `<FaceViewer>` 组件：键盘 ←/→/Space ✅ M7 | M6-T-14 |
+| M7-T-2 | `<FaceViewer>` 鼠标滚轮缩放 + 双击 100%↔fit ✅ M7 | M7-T-1 |
+| M7-T-3 | `<FaceViewer>` 拖动 pan ✅ M7 | M7-T-2 |
+| M7-T-4 | `<FaceViewer>` 全屏切换（F / Esc） ✅ M7 | M7-T-2 |
+| M7-T-5 | `@use-gesture/react` 触摸手势（pinch、swipe、tap） ✅ M7 | M7-T-2 |
+| M7-T-6 | `<FaceOverlay>` 在图上画 bbox ⏸️ M7.5（已落地 no-op 组件，等 `/api/photos/{id}/metadata`） | M7-T-1 |
+| M7-T-7 | `api/photos/{id}/metadata` EXIF + 路径 ⏸️ M7.5 | — |
+| M7-T-8 | 信息层抽屉（EXIF、文件名、原图路径）⏸️ M7.5 | M7-T-7 |
+| M7-T-9 | PWA manifest + service worker ⏸️ M7.5 | M7-T-1 |
+| M7-T-10 | 浏览器 E2E 测试（Playwright）⏸️ M7.5 | M7-T-1 |
+| M7-T-11 | `Toast` (sonner) 错误反馈统一封装 ⏸️ M7.5 | M6-T-11b |
+| M7-T-12 | 全局 `Command` (cmdk) 搜索（按人名 / 路径 / EXIF）⏸️ M7.5 | M6-T-11b |
+| M7-T-13 | `Badge` 标注 NC-research 模型包警告 ⏸️ M7.5 | M6-T-11b |
 
 ### 2.2 验收
 

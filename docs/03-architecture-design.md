@@ -427,92 +427,95 @@ pick-face-web serve --host 0.0.0.0 --port 8000
 
 ## 7. 前端架构（SPA）
 
+> **M7 状态**：✅ SPA 骨架 + 四个核心路由 + FaceViewer（键盘/滚轮/拖动/全屏/手势）+ SSE 进度条。PWA / 全局搜索 / EXIF 抽屉 / Sonner 封装 / NC-research Badge 推迟到 M7.5。
+
 ```
-src/web/                                # Vite + React + TS + shadcn/ui
-├── main.tsx                            # React 入口，挂载 <App/>
-├── App.tsx                             # 路由 + QueryClientProvider + ThemeProvider
-├── routes/
-│   ├── Home.tsx                        # / 入口
-│   ├── Persons.tsx                     # /persons 虚拟相册列表
-│   ├── PersonDetail.tsx                # /persons/:id 瀑布流
-│   ├── PhotoViewer.tsx                 # /persons/:id/photos/:photoId 查看器
-│   └── Settings.tsx                    # /settings 路径配置
-├── components/
-│   ├── ui/                             # shadcn/ui 生成（复制源码，可改）
-│   │   ├── button.tsx
-│   │   ├── dialog.tsx                  # Radix Dialog
-│   │   ├── dropdown-menu.tsx           # Radix DropdownMenu
-│   │   ├── tabs.tsx                    # Radix Tabs
-│   │   ├── toast.tsx                   # Radix Toast + sonner
-│   │   ├── slider.tsx                  # Radix Slider
-│   │   └── ...                         # 见 §7.2
-│   ├── PhotoGrid.tsx                   # 瀑布流（react-photo-album）
-│   ├── FaceViewer.tsx                  # 自研查看器（@use-gesture + framer-motion）
-│   ├── FaceOverlay.tsx                 # 在图上画 bbox
-│   ├── ScanProgressToast.tsx           # SSE 订阅（Radix Toast）
-│   ├── PathManagerDialog.tsx           # 添加/删除扫描路径（Radix Dialog）
-│   ├── ModelPackSelector.tsx           # 模型包切换（Radix DropdownMenu）
-│   └── ThemeToggle.tsx                 # 明暗主题切换
-├── api/
-│   ├── schema.ts                       # openapi-typescript 生成（不要手改）
-│   ├── client.ts                       # 基于 schema.ts 的 fetch 封装
-│   └── hooks.ts                        # TanStack Query 包装（usePersons/usePhotos/...）
-├── lib/
-│   ├── gesture.ts                      # @use-gesture 封装
-│   ├── sse.ts                          # EventSource hook
-│   ├── utils.ts                        # cn() 等 shadcn/ui 公用工具
-│   └── theme.tsx                       # ThemeProvider（class=dark 切换）
-└── styles/
-    └── globals.css                     # Tailwind directives + CSS 变量（HSL token）
+src/pick_face/web/
+├── __init__.py                  # 包标识；docstring 描述 app/static 关系
+├── static/                      # Vite outDir（gitignore；CI 重建）
+│   ├── index.html               # SPA 入口；FastAPI 在 / 挂载
+│   └── assets/                  # hashed JS / CSS chunks
+└── app/                         # Vite + React + TS + Tailwind + shadcn/ui 源码
+    ├── package.json
+    ├── pnpm-lock.yaml           # 入仓，CI 用作 pnpm 缓存键
+    ├── vite.config.ts           # base=/, outDir=../static, proxy=/api
+    ├── vitest.config.ts         # jsdom + globals
+    ├── tailwind.config.ts / postcss.config.js
+    ├── components.json          # shadcn/ui 配置
+    ├── index.html               # vite HTML 模板（区别于 ../static/index.html）
+    ├── tsconfig.json / tsconfig.node.json
+    ├── public/favicon.svg
+    ├── .env.example             # VITE_API_BASE=/api
+    └── src/
+        ├── main.tsx
+        ├── App.tsx                          # createBrowserRouter + Providers
+        ├── routeTree.ts
+        ├── vite-env.d.ts                    # ImportMeta.env 类型
+        ├── lib/
+        │   ├── api/{client,schemas,hooks}.ts    # 14 端点手写 zod + TanStack Query
+        │   ├── env.ts                            # import.meta.env 包装
+        │   ├── cn.ts                             # clsx + tailwind-merge
+        │   ├── sse.ts                            # 类型化 EventSource
+        │   └── viewerStore.ts                    # zustand: FaceViewer 状态
+        ├── components/
+        │   ├── ui/                              # shadcn 复制源码（可改）
+        │   ├── layout/{AppShell,ScanProgressBanner}.tsx
+        │   ├── viewer/{FaceViewer,FaceOverlay,useViewerControls,ViewerToolbar}.tsx
+        │   ├── persons/{PersonCard}.tsx
+        │   └── settings/{PathList,PathAddDialog}.tsx
+        └── pages/{HomeRedirect,PersonsPage,PersonDetailPage,SettingsPage,NotFoundPage}.tsx
 ```
 
-**核心约定**：
+**关键约定**：
+
 - 所有按钮 / 弹窗 / 下拉 / Tab / Slider / Toast **必须用** shadcn/ui 的 `components/ui/*` —— 不允许临时 div + Tailwind 复刻（无障碍/键盘支持会丢）
-- 新增 shadcn/ui 组件：`pnpm dlx shadcn@latest add <component>`（写入 `src/web/components/ui/`）
+- 新增 shadcn/ui 组件：手动把 shadcn 模板复制到 `src/pick_face/web/app/src/components/ui/`（**永不** `pnpm add shadcn`）
 - 颜色 token（`--background` / `--foreground` / `--primary` / `--muted` ...）走 CSS 变量，**不**直接用 Tailwind class 硬编码 `bg-slate-900`
+- 客户端 API 类型用 `zod` schema 手写镜像 Pydantic（`src/pick_face/web/app/src/lib/api/schemas.ts`）—— M9 端点数翻三倍时再评估是否切到 `openapi-typescript`
+- 服务端状态用 TanStack Query；本地 UI 状态用 zustand；表单用 react-hook-form + zod
 
 ### 7.1 关键依赖
 
 | 依赖 | 用途 |
 |---|---|
 | `react` / `react-dom` | UI 框架 |
+| `react-router-dom` | 路由（`createBrowserRouter`，URL 即查看器状态） |
 | `typescript` / `vite` | 类型 + 构建 |
 | `tailwindcss` / `postcss` / `autoprefixer` | utility CSS |
 | `class-variance-authority` / `clsx` / `tailwind-merge` | shadcn/ui 配套（`cn()`） |
 | `@radix-ui/react-*` | shadcn/ui 行为原语 |
 | `lucide-react` | 图标 |
 | `react-hook-form` / `@hookform/resolvers` / `zod` | 表单 + 校验（与 Pydantic schema 互译） |
-| `@tanstack/react-query` | 服务端状态缓存 |
-| `zustand` | 本地 UI 状态（查看器缩放级别 / 全屏 / 当前 photoId） |
-| `react-photo-album` | 瀑布流 |
-| `@use-gesture/react` | 手势 |
+| `@tanstack/react-query` | 服务端状态缓存 + 失效 |
+| `zustand` | 本地 UI 状态（查看器缩放 / 平移 / 全屏 / 当前 photoId） |
+| `react-photo-album` | 瀑布流（`layout="rows"`） |
+| `@use-gesture/react` | 拖动 + pinch + double-click |
 | `framer-motion` | 查看器过渡 |
-| `sonner` | Toast（shadcn/ui 推荐） |
-| `openapi-typescript` | 从 FastAPI OpenAPI 生成 TS 类型 |
+| `next-themes` | 主题（明 / 暗 / 跟随系统） |
+| `sonner` | Toast（M7.5 接入；当前用 `useState` 直接渲染） |
 
 构建产物：Vite 输出到 `src/pick_face/web/static/`，FastAPI 用 `StaticFiles` mount 到 `/`。
+CI 工作流（`.github/workflows/ci.yml`）：`lint` → `frontend-build`（pnpm）→ `unit`（需要 web/static/ 存在）→ `frontend-test` → 三 OS smoke → bench → docs → AC-9。
+sdist 排除 `web/app/**` 和 `web/static/**`（见 `pyproject.toml`），让 PyPI sdist 保持纯源码；wheel 自动携带 `web/static/`。
 
-### 7.2 计划引入的 shadcn/ui 组件清单（M6-M9 范围）
+### 7.2 M7 已落地的 shadcn/ui 组件
 
 | 组件 | 用在哪 |
 |---|---|
 | `Button` | 全局 |
-| `Dialog` | 添加扫描路径 / 模型包详情 / EXIF 详情 |
-| `DropdownMenu` | 模型包切换 / 主题切换 / 单张照片"打开人/原图/导出"菜单 |
-| `Tabs` | `/settings` 分页（路径 / 模型 / 阈值） |
-| `Toast` (sonner) | 扫描进度 / 保存成功 / 错误 |
-| `Slider` | 查看器缩放、merge_threshold 调节 |
-| `Switch` | 启用/禁用扫描路径 |
-| `Tooltip` | 人脸 bbox 悬停 |
-| `Sheet` | 查看器右侧 EXIF 抽屉 |
-| `Command` (cmdk) | 全局搜索（按人名 / 路径） |
-| `Skeleton` | 列表加载占位 |
-| `Badge` | 标签（NC-research 警告 / 缩略图分辨率） |
+| `Card` | PersonCard / PathList / Settings 卡 |
+| `Dialog` | 添加扫描路径 / FaceViewer 宿主 |
+| `Tabs` | `/settings`（Paths / Scan / Model） |
+| `Switch` | 启用 / 禁用扫描路径 |
 | `Progress` | 扫描进度条（SSE 推 percent） |
+| `Skeleton` | 列表加载占位 |
+| `Badge` | Model Tab 占位（M7.5 接入 NC-research 警告） |
+| `Label` / `Input` | 表单字段 |
+| `Toaster` (sonner 占位) | 当前未挂载；M7.5 接 sonner |
 
 ### 7.3 主题与暗色模式
 
-`tailwind.config.ts` 配置 `darkMode: 'class'`。`<html>` 上的 `dark` class 由 `ThemeToggle` 切换。CSS 变量定义在 `src/web/styles/globals.css`：
+`tailwind.config.ts` 配置 `darkMode: 'class'`。`<html>` 上的 `dark` class 由 `next-themes` 的 `ThemeProvider` 切换。CSS 变量定义在 `src/pick_face/web/app/src/styles/globals.css`。
 
 ```css
 :root {
