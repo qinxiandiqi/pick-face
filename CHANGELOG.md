@@ -162,6 +162,123 @@ aligned) — not a photo thumbnail. Data source: `persons.thumbnail_face_id`
 `/persons` grid tells the user "who is who" at a glance, even when the
 underlying photos contain side profiles or closed eyes.
 
+### M6 implementation (Web service foundation)
+
+The M6 milestone ships the **service + API + worker skeleton** end-to-end.
+The React SPA itself lands in M7; M6 supplies the FastAPI surface, scan
+worker, `pick-face-web` console script, and 80 new unit tests + 5
+integration tests.
+
+#### New modules
+
+- **`src/pick_face/service/`** — algorithm-agnostic service layer
+  - `paths.py` — `AppLayout` resolves `~/.pick-face/` (override via
+    `PICK_FACE_HOME`), materializes the 3-tier `config/` + `data/` +
+    `cache/` directory tree
+  - `config_service.py` — path-whitelist CRUD (TOML persistence with
+    Windows-path backslash escaping), validation (`Path.resolve()` +
+    lexical `..` rejection + whitelist-membership check)
+  - `scan_service.py` — JSON-backed scan-job state machine
+    (`QUEUED` / `RUNNING` / `DONE` / `FAILED` / `CANCELLED`),
+    `data/jobs/scan-<uuid>.json` registry (single-process M6 scope;
+    SQLite-backed in M8)
+  - `person_service.py` — virtual-album queries (list / count /
+    detail / cover selection by `quality → det_score → bbox_area`)
+  - `photo_service.py` — photo lookup with whitelist enforcement,
+    thumbnail cache (`256×256` JPEG, content-hash bucketed, 100% cover
+    via `is_under_any_whitelisted`)
+  - `file_watcher.py` — `watchdog` observer stub; M6 uses polling,
+    real-time events arrive in M8
+- **`src/pick_face/api/`** — FastAPI routers (all under `/api/*`)
+  - `app.py` — `create_app()` factory: lifespan starts/stops the
+    in-process `ScanRunner`; SPA static mount
+    (`src/pick_face/web/static/`) for the M7 build artifact
+  - `health.py` — `/api/health` (liveness) + `/api/ready` (DB +
+    layout sanity check)
+  - `config.py` — `/api/config/paths` CRUD with stable error codes
+    (`NOT_FOUND → 404`, `NOT_A_DIRECTORY → 400`, `NOT_READABLE → 403`,
+    `PATH_TRAVERSAL → 400`, `DUPLICATE → 409`, `NOT_WHITELISTED → 403`)
+  - `scan.py` — `/api/scan/jobs{,/active,/{id},/{id}/events}` —
+    job create/list/get/SSE stream. Defensive `try/except RuntimeError`
+    around `asyncio.create_task` (sync handlers in TestClient run in a
+    worker thread without a running loop)
+  - `persons.py` — `/api/persons{,/count,/{id},/{id}/photos,/{id}/cover}`
+  - `photos.py` — `/api/photos/{id}` (HTTP Range streaming, never
+    copies the original), `/api/photos/{id}/thumb`, `/api/photos/{id}/meta`
+  - `deps.py` — FastAPI dependency providers (`get_layout`,
+    `get_*_service`) with real `Request` import (not `TYPE_CHECKING`),
+    so FastAPI registers `Request` as `Depends` instead of treating it
+    as a query parameter
+- **`src/pick_face/worker/`** — async workers driven by `asyncio`
+  - `scan_worker.py` — `run_scan()` coroutine: per-file detect + embed
+    in `run_in_executor`. **Each file opens a fresh SQLite connection**
+    — connections can't cross threads in SQLite's `check_same_thread=True`
+    default
+  - `runner.py` — `ScanRunner` polls the JSON job registry, dispatches
+    to `scan_worker`. `make_runner()` is best-effort: detector/embedder
+    are `None` if no model pack is on disk (the SPA shows
+    "init-models required")
+- **`src/pick_face/web_cli.py`** — `pick-face-web {init,serve,migrate}`
+  argparse subcommands (NOT Typer — we keep one CLI style across the
+  project). `init` creates the app root + default `config.toml`;
+  `serve` runs the FastAPI app via uvicorn; `migrate` reads v2.x
+  `by_face/` and populates the v3 SQLite DB.
+
+#### pyproject changes
+
+- `__version__ = "3.0.0.dev0"` in `src/pick_face/__init__.py`
+- New `[web]` extra: `fastapi>=0.110,<1`, `uvicorn[standard]>=0.27,<1`,
+  `watchdog>=4,<7`, `apscheduler>=3.10,<4`, `python-multipart>=0.0.9,<1`
+- New `[dev]` extra add-ons: `pytest-asyncio>=0.23,<1`, `httpx>=0.27,<1`
+- New console script: `pick-face-web = "pick_face.web_cli:main"`
+- New pytest marker: `web_smoke` (end-to-end smoke for v3 Web service)
+- 19 new M6 modules registered in
+  `tests/unit/test_packaging.py::EXPECTED_MODULES`
+
+#### Tests added (M6)
+
+- `tests/unit/test_service_paths.py` — 7 tests (HOME + USERPROFILE
+  env var handling on Windows, `PICK_FACE_HOME` override, default
+  layout, three-tier creation)
+- `tests/unit/test_service_config.py` — 13 tests (validation rules,
+  dedup, persistence, TOML round-trip with backslash escaping)
+- `tests/unit/test_service_scan.py` — 13 tests (state machine
+  transitions, JSON round-trip, persistence)
+- `tests/unit/test_service_person.py` — 11 tests (cover selection
+  algorithm, cluster queries — fixed seed for v2.x NOT NULL columns
+  `cluster.size/created_at/updated_at` + `source.hash_algo` +
+  `face.cluster_id`)
+- `tests/unit/test_service_photo.py` — 8 tests (thumbnail generation,
+  whitelist enforcement, missing photo handling)
+- `tests/unit/test_api_routes.py` — 20 tests (full FastAPI surface via
+  TestClient, with `get_layout` patched to the temp fixture)
+- `tests/unit/test_scan_worker.py` — 3 tests (`asyncio.run` on
+  `run_scan`, per-file errors, progress callback — stub detector +
+  4-D embedder, no real weights)
+- `tests/unit/test_web_cli.py` — 7 tests (`init` / `serve` / `migrate`
+  subcommands; uses argparse, not Typer)
+- `tests/integration/test_web_smoke.py` — 5 tests, all passing — end-to-end
+  smoke: `pick-face-web init` → whitelist photos → start scan → drive
+  `run_scan` directly via `asyncio.run` (TestClient loop doesn't tick
+  scheduled tasks during sync calls) → query persons → serve thumbnail
+  → check health. **Stub detector/embedder wired before
+  `make_runner()`** so no real weights needed in CI.
+
+M6 test totals: **381 tests collected** (376 unit/integration + 3
+deselected as `real_data`; 5 of those are `web_smoke` integration).
+Before M6: ~301. M6 delta: **+80 tests**.
+
+#### M6 → M7 hand-off
+
+- The React SPA from `apps/web/` will replace
+  `src/pick_face/web/static/index.html` at build time; the static mount
+  is observable end-to-end today via the M6 placeholder.
+- `ScanRunner.consider()` (polling) becomes event-driven when
+  `watchdog` events arrive in M8.
+- The single-process JSON job registry
+  (`data/jobs/scan-<uuid>.json`) becomes a SQLite-backed `jobs` table
+  when multi-process uvicorn workers land in M8.
+
 ---
 
 ## [2.1.0] - 2026-08-10 — High-precision tier (yunet-arcface)

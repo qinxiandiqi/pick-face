@@ -1,13 +1,18 @@
 """pick-face FastAPI routers (v3 Web service).
 
-Thin HTTP layer over `service/`. Routes follow `docs/03 §2` HTTP API contract.
+Thin HTTP layer over :mod:`pick_face.service`. Routes follow the
+``docs/03 §2`` HTTP API contract.
 
-* `api/config.py`  — /api/config (path whitelist CRUD)
-* `api/scan.py`    — /api/scan (start/pause/cancel + SSE progress)
-* `api/persons.py` — /api/persons (virtual albums + cover)
-* `api/photos.py`  — /api/photos (Range streaming + thumbnails)
-* `api/review.py`  — /api/review (rename/merge — M6 placeholder)
-* `api/health.py`  — /api/health (liveness + worker state)
+Public routers in this package (mounted by :func:`pick_face.api.app.create_app`):
+
+* :mod:`pick_face.api.config`   — ``/api/config``   (path whitelist CRUD)
+* :mod:`pick_face.api.scan`     — ``/api/scan``     (start/pause/cancel + SSE progress)
+* :mod:`pick_face.api.persons`  — ``/api/persons``  (virtual albums + cover)
+* :mod:`pick_face.api.photos`   — ``/api/photos``   (Range streaming + thumbnails)
+* :mod:`pick_face.api.health`   — ``/api/health`` + ``/api/ready`` (liveness)
+
+``/api/review`` (rename/merge/delete) lands in M9; the route table
+is wired in :mod:`pick_face.api.app` once the review service exists.
 """
 
 from __future__ import annotations

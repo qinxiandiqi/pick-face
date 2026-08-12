@@ -212,6 +212,7 @@ markers = [
     "integration: integration tests (may hit filesystem)",
     "acceptance: acceptance tests (AC-1~AC-9)",
     "real_data: real-face integration tests (skipped unless dataset fetched)",
+    "web_smoke: end-to-end smoke tests for the v3 Web service (FastAPI + ScanRunner)",
     "slow: slow tests (>1s)",
 ]
 

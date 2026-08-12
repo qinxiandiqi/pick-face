@@ -42,32 +42,33 @@ v3 在 v2.x 五域子包结构上加一层 **service domain**（`src/pick_face/s
 
 ### 1.1 新增 `service/` 子包
 
-| 文件 | 职责 |
-|---|---|
-| `service/config_service.py` | 路径白名单校验 + 配置 CRUD（持久化到 `config.toml`） |
-| `service/scan_service.py` | 启动扫描任务、进度 SSE、暂停/恢复 |
-| `service/person_service.py` | 虚拟相册 list/rename/merge/delete（薄包装 `store/review.py`） |
-| `service/photo_service.py` | 缩略图、原图流（Range）、元数据查询 |
-| `service/file_watcher.py` | watchdog → asyncio.Queue 适配 |
+| 文件 | 职责 | M6 状态 |
+|---|---|---|
+| `service/paths.py` | `AppLayout` + `~/.pick-face/` 解析 + 3-tier 目录树 | ✅ 已实现 |
+| `service/config_service.py` | 路径白名单校验 + 配置 CRUD（持久化到 `config.toml`） | ✅ 已实现 |
+| `service/scan_service.py` | JSON-backed scan-job 状态机（`QUEUED/RUNNING/DONE/FAILED/CANCELLED`） | ✅ 已实现 |
+| `service/person_service.py` | 虚拟相册 list/count/detail/photos/cover | ✅ 已实现（薄包装 `store/index.py` 查询） |
+| `service/photo_service.py` | 缩略图生成 + 原图 Range 流 + 元数据查询 + 白名单二次校验 | ✅ 已实现 |
+| `service/file_watcher.py` | watchdog → asyncio.Queue 适配 | ⏳ M8（轮询占位） |
 
 ### 1.2 新增 `api/` 子包
 
-| 文件 | 路由前缀 | 职责 |
-|---|---|---|
-| `api/config.py` | `/api/config` | 路径 CRUD、健康检查 |
-| `api/scan.py` | `/api/scan` | 启动扫描、查询状态、SSE 进度 |
-| `api/persons.py` | `/api/persons` | 虚拟相册 list、详情 |
-| `api/photos.py` | `/api/photos` | 缩略图、原图流、EXIF |
-| `api/review.py` | `/api/review` | rename/merge/delete |
-| `api/health.py` | `/api/health` | 服务健康 |
+| 文件 | 路由前缀 | 职责 | M6 状态 |
+|---|---|---|---|
+| `api/config.py` | `/api/config` | 路径 CRUD、健康检查 | ✅ 已实现 |
+| `api/scan.py` | `/api/scan` | 启动扫描、查询状态、SSE 进度 | ✅ 已实现（最小集） |
+| `api/persons.py` | `/api/persons` | 虚拟相册 list、详情 | ✅ 已实现（list / count / detail / photos / cover） |
+| `api/photos.py` | `/api/photos` | 缩略图、原图流、EXIF | ✅ 已实现（`/{id}` Range + `/{id}/thumb` + `/{id}/meta`） |
+| `api/review.py` | `/api/review` | rename/merge/delete | ⏳ M9 |
+| `api/health.py` | `/api/health` + `/api/ready` | 服务健康 | ✅ 已实现 |
 
 ### 1.3 新增 `worker/` 子包
 
-| 文件 | 职责 |
-|---|---|
-| `worker/scan_worker.py` | 队列消费者：调用 detector + embedder，写入 SQLite + HNSW |
-| `worker/index_worker.py` | HNSW 增量添加 |
-| `worker/cluster_worker.py` | 周期任务：新 embedding 累积到 N 张时触发 HDBSCAN |
+| 文件 | 职责 | M6 状态 |
+|---|---|---|
+| `worker/scan_worker.py` | 队列消费者：调用 detector + embedder，写入 SQLite + HNSW | ✅ 已实现（in-process via `run_scan()` coroutine） |
+| `worker/index_worker.py` | HNSW 增量添加 | ⏳ M8（scan_worker 现写 HNSW 同步） |
+| `worker/cluster_worker.py` | 周期任务：新 embedding 累积到 N 张时触发 HDBSCAN | ⏳ M8（扫描时同步聚类） |
 
 ### 1.4 复用 v2.x
 
@@ -105,52 +106,67 @@ output/    ← 所有 domain 可调用（路径映射、报表）
 
 所有 endpoint 返回 JSON；FastAPI 自动 OpenAPI 文档位于 `/api/docs`。
 
+> **M6 范围**：本节列出的 endpoint 是 **v3.0 完整契约**。M6 已实现的用 ✅
+> 标注；标记 ⏳ 的属于后续里程碑（M7 SPA / M8 多进程 / M9 review）。
+> 前端开发时按本节契约实现 UI，后端未实现的 endpoint 在 SPA 里用占位
+> 组件（"feature coming in M9"）+ 503 graceful fallback。
+
 ### 2.1 配置 (`/api/config`)
 
 ```
-GET  /api/config                  # 当前配置（白名单路径、模型 pack、merge_threshold）
-POST /api/config/paths            # 添加扫描路径 { path: str }
-                                 #   400 INVALID_PATH / NOT_WHITELISTED / NOT_FOUND
-DELETE /api/config/paths/{id}     # 移除路径
-GET  /api/config/paths            # 列出已配置路径
+GET  /api/config                  # 当前配置（白名单路径、模型 pack、merge_threshold）  ⏳ M7
+POST /api/config/paths            # 添加扫描路径 { path: str }                       ✅ M6
+                                 #   400 INVALID_PATH / NOT_A_DIRECTORY
+                                 #   403 PATH_TRAVERSAL / NOT_READABLE / DUPLICATE
+                                 #   404 NOT_FOUND
+DELETE /api/config/paths/{id}     # 移除路径                                         ✅ M6
+GET  /api/config/paths            # 列出已配置路径                                    ✅ M6
+GET  /api/config/paths/enabled    # 仅返回 enabled=true 的 path（给 file watcher 用） ✅ M6
 ```
 
 ### 2.2 扫描 (`/api/scan`)
 
 ```
-POST /api/scan/start              # 启动扫描 { paths?: [str], full?: bool }
+POST /api/scan/jobs               # 启动扫描 { kind: "incremental"|"full" }        ✅ M6
                                  #   202 ACCEPTED；扫描 id
-POST /api/scan/{id}/pause
-POST /api/scan/{id}/resume
-POST /api/scan/{id}/cancel
-GET  /api/scan/active             # 当前活动扫描
-GET  /api/scan/{id}               # 状态
-GET  /api/scan/{id}/progress      # SSE: {processed, total, faces, errors, eta_sec}
+GET  /api/scan/jobs               # 列出所有 job（最近 N 条）                        ✅ M6
+GET  /api/scan/jobs/active        # 当前活动扫描                                      ✅ M6
+GET  /api/scan/jobs/{id}          # 单个 job 的状态 + 进度                          ✅ M6
+GET  /api/scan/jobs/{id}/events   # SSE: progress + state 事件                     ✅ M6
+POST /api/scan/jobs/{id}/pause    #                                                          ⏳ M8
+POST /api/scan/jobs/{id}/resume   #                                                          ⏳ M8
+POST /api/scan/jobs/{id}/cancel   #                                                          ⏳ M8
 ```
 
-SSE 流格式（`text/event-stream`）：
+SSE 流格式（`text/event-stream`，`scan.py` M6 实现）：
 
 ```
 event: progress
-data: {"processed": 4321, "total": 10000, "faces": 234, "errors": 3, "eta_sec": 180}
+data: {"processed": 4321, "total": 10000, "faces": 234, "errors": 3,
+       "state": "RUNNING", "job_id": "abc"}
 
-event: stage
-data: {"stage": "detecting", "scan_id": "abc"}
+event: closed                    # 上游断开 / 客户端 cancel
+data: {}
 
-event: done
-data: {"scan_id": "abc", "result": "ok"}
+event: end                       # job 进入终态（DONE / FAILED / CANCELLED）后流终止
+data: {}
 ```
+
+> M6 的 SSE 只发 `progress` 事件。`stage`（detecting / embedding /
+> clustering）是后续 M7 的客户端进度条细节，本节理想契约里写的
+> `event: stage` / `event: done` 留给 M8 完整 worker pipeline 时再发。
 
 ### 2.3 虚拟相册 (`/api/persons`)
 
 ```
-GET    /api/persons?cursor=&limit=50        # 列表（每项含 cover_url）
-GET    /api/persons/{id}                    # 详情：name, photo_count, sources, cover_face_id
-GET    /api/persons/{id}/cover              # ⭐ 虚拟相册封面（112×112 人脸 chip）
-GET    /api/persons/{id}/photos?cursor=&limit=200&sort=mtime_desc
-PATCH  /api/persons/{id}                    # 重命名 { name: str }
-POST   /api/persons/merge                   # { source_ids: [id], target_id: id }
-DELETE /api/persons/{id}                    # 软删除（mark deleted）
+GET    /api/persons?limit=50                       # 列表（每项含 cover_url）     ✅ M6
+GET    /api/persons/count                          # 总数                              ✅ M6
+GET    /api/persons/{id}                           # 详情：name, photo_count, sources, cover_face_id  ✅ M6
+GET    /api/persons/{id}/photos?limit=200          # waterfall                            ✅ M6
+GET    /api/persons/{id}/cover                     # ⭐ 虚拟相册封面（112×112 人脸 chip） ✅ M6
+PATCH  /api/persons/{id}                           # 重命名 { name: str }                    ⏳ M9
+POST   /api/persons/merge                          # { source_ids: [id], target_id: id }       ⏳ M9
+DELETE /api/persons/{id}                           # 软删除（mark deleted）                  ⏳ M9
 ```
 
 **封面契约**（关键）：
@@ -163,27 +179,37 @@ DELETE /api/persons/{id}                    # 软删除（mark deleted）
 ### 2.4 图片 (`/api/photos`)
 
 ```
-GET  /api/photos/{id}                     # 流式原图（支持 HTTP Range，不复制）
-GET  /api/photos/{id}/thumbnail           # 缩略图（JPEG 256×256）
-GET  /api/photos/{id}/metadata            # EXIF + 路径 + mtime + 该脸所在 person
-GET  /api/photos/{id}/faces               # 该图所有人脸（bbox + 哪个 person）
+GET  /api/photos/{id}                     # 流式原图（支持 HTTP Range，不复制）   ✅ M6
+GET  /api/photos/{id}/thumb                # 缩略图（JPEG 256×256）                  ✅ M6
+GET  /api/photos/{id}/meta                 # 路径 + mtime + 该脸所在 person            ✅ M6
+GET  /api/photos/{id}/thumbnail            # 同 /thumb（保留别名）                          ⏳ M7
+GET  /api/photos/{id}/metadata            # EXIF + bbox + faces 完整列表                    ⏳ M7
+GET  /api/photos/{id}/faces               # 该图所有人脸（bbox + 哪个 person）              ⏳ M7
 ```
 
+> M6 已实现的 `/api/photos/{id}/meta` 返回最小集（路径 + mtime +
+> cluster_id），不含 EXIF。完整 EXIF + bbox + faces 在 M7 给 SPA viewer
+> 组件时扩展。
+
 **安全契约**：`/api/photos/{id}` 永远只返回**已记录到数据库**的图片。  
-绝不能直接 `FileResponse(request.query_params["path"])` —— 那会让攻击者用 `?path=../../etc/passwd` 读到任何文件。
+绝不能直接 `FileResponse(request.query_params["path"])` —— 那会让攻击者用 `?path=../../etc/passwd` 读到任何文件。  
+实现见 `service/photo_service.py::lookup_photo`：先从 DB 拿 `source.path`，再用 `is_under_any_whitelisted()` 二次校验（深度防御）；非白名单返回 403 `NOT_WHITELISTED`。
 
 ### 2.5 Review (`/api/review`)
 
 ```
-GET  /api/review/pending?limit=20        # 待人工 review（低置信聚类）
-POST /api/review/{face_id}              # { action: "accept" | "reject" | "merge_with", target?: id }
+GET  /api/review/pending?limit=20        # 待人工 review（低置信聚类）       ⏳ M9
+POST /api/review/{face_id}              # { action: "accept"|"reject"|"merge_with", target: id } ⏳ M9
 ```
 
 ### 2.6 健康 (`/api/health`)
 
 ```
-GET  /api/health
-→ {"status": "ok", "packs": [...], "workers": {...}, "queue_depth": N}
+GET  /api/health            # liveness — 不查 DB       ✅ M6
+→ {"status": "ok"}
+
+GET  /api/ready             # readiness — 查 DB + AppLayout 摘要   ✅ M6
+→ {"status": "ready", "data_dir": "~/.pick-face", "db": "...", "jobs": 0}
 ```
 
 ## 3. 数据流（端到端）
