@@ -58,7 +58,7 @@ v3 在 v2.x 五域子包结构上加一层 **service domain**（`src/pick_face/s
 | `api/config.py` | `/api/config` | 路径 CRUD、健康检查 | ✅ 已实现 |
 | `api/scan.py` | `/api/scan` | 启动扫描、查询状态、SSE 进度 | ✅ 已实现（最小集） |
 | `api/persons.py` | `/api/persons` | 虚拟相册 list、详情 | ✅ 已实现（list / count / detail / photos / cover） |
-| `api/photos.py` | `/api/photos` | 缩略图、原图流、EXIF | ✅ 已实现（`/{id}` Range + `/{id}/thumb` + `/{id}/meta`） |
+| `api/photos.py` | `/api/photos` | 缩略图、原图流、metadata | ✅ 已实现（`/{id}` Range + `/{id}/thumb` + `/{id}/meta` M7.5 扩展为含 bbox + 人脸列表） |
 | `api/review.py` | `/api/review` | rename/merge/delete | ⏳ M9 |
 | `api/health.py` | `/api/health` + `/api/ready` | 服务健康 | ✅ 已实现 |
 
@@ -181,15 +181,15 @@ DELETE /api/persons/{id}                           # 软删除（mark deleted）
 ```
 GET  /api/photos/{id}                     # 流式原图（支持 HTTP Range，不复制）   ✅ M6
 GET  /api/photos/{id}/thumb                # 缩略图（JPEG 256×256）                  ✅ M6
-GET  /api/photos/{id}/meta                 # 路径 + mtime + 该脸所在 person            ✅ M6
+GET  /api/photos/{id}/meta                 # 路径 + mtime + size + 自然尺寸 + 人脸列表（bbox + cluster_id + det_score + quality）✅ M7.5
 GET  /api/photos/{id}/thumbnail            # 同 /thumb（保留别名）                          ⏳ M7
 GET  /api/photos/{id}/metadata            # EXIF + bbox + faces 完整列表                    ⏳ M7
 GET  /api/photos/{id}/faces               # 该图所有人脸（bbox + 哪个 person）              ⏳ M7
 ```
 
-> M6 已实现的 `/api/photos/{id}/meta` 返回最小集（路径 + mtime +
-> cluster_id），不含 EXIF。完整 EXIF + bbox + faces 在 M7 给 SPA viewer
-> 组件时扩展。
+> M7.5 起 `/api/photos/{id}/meta` 返回扩展集（路径 + mtime + size +
+> 自然宽高 + `faces[]`），供 `<FaceOverlay>` 渲染 bbox 与 EXIF 抽屉展示
+> 详细信息。纯 EXIF（相机 / GPS / 曝光）字段仍推迟到 M9。
 
 **安全契约**：`/api/photos/{id}` 永远只返回**已记录到数据库**的图片。  
 绝不能直接 `FileResponse(request.query_params["path"])` —— 那会让攻击者用 `?path=../../etc/passwd` 读到任何文件。  
@@ -427,7 +427,8 @@ pick-face-web serve --host 0.0.0.0 --port 8000
 
 ## 7. 前端架构（SPA）
 
-> **M7 状态**：✅ SPA 骨架 + 四个核心路由 + FaceViewer（键盘/滚轮/拖动/全屏/手势）+ SSE 进度条。PWA / 全局搜索 / EXIF 抽屉 / Sonner 封装 / NC-research Badge 推迟到 M7.5。
+> **M7 状态**：✅ SPA 骨架 + 四个核心路由 + FaceViewer（键盘/滚轮/拖动/全屏/手势）+ SSE 进度条。
+> **M7.5 状态**：✅ `<FaceOverlay>` bbox 渲染（按 cluster_id 高亮当前人）+ EXIF 侧抽屉（路径/尺寸/人脸列表；EXIF 字段待后端）。PWA / 全局搜索 / Sonner 封装 / NC-research Badge 仍推迟到 M7.5 余下项。
 
 ```
 src/pick_face/web/

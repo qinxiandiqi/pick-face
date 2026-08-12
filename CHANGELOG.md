@@ -344,6 +344,67 @@ wheel.
 | Tests | `tests/unit/test_vite_build_artifacts.py` | `tests/unit/test_vite_build_artifacts.py` |
 | Docs | — | `README.md`, `docs/03-architecture-design.md`, `docs/06-engineering-plan.md`, `CHANGELOG.md` |
 
+### M7.5 — FaceOverlay bbox rendering + EXIF side-sheet (M7 hand-off)
+
+Fills the three M7.5 tasks that needed backend metadata extension. The
+viewer now draws real face bboxes and the `/persons/:id` page exposes
+extended photo metadata via a right-side drawer.
+
+#### What's new
+
+- **`/api/photos/{id}/meta` extended** — now returns
+  `natural_width`, `natural_height`, and `faces[]` (each with `bbox`,
+  `cluster_id`, `det_score`, `quality`). Service layer:
+  `pick_face.service.photo_service.get_photo_metadata()` opens the
+  image with PIL to read natural dimensions and joins the `face` table
+  for detected faces.
+- **`<FaceOverlay>` bbox rendering** — SVG overlay fed from the
+  extended metadata. Stroke width scales with `min(naturalW, naturalH)`;
+  matching `cluster_id` gets the primary stroke, non-matching gets a
+  dimmed muted stroke. Unknown-cluster faces stay full opacity.
+  Hooked into `FaceViewer` (M7-T-6) using server-reported natural
+  dimensions (PIL fallback) and `<img>.naturalWidth` as a backstop.
+- **EXIF side-sheet drawer** — `<PhotoMetaSheet>` on `/persons/:id`,
+  opened via an "Info" button in the header. Renders Identity, Image,
+  Faces (list with bbox + det_score + quality), and an EXIF
+  placeholder (backend doesn't expose EXIF yet). Built on the shadcn
+  `Sheet` primitive + Radix Dialog.
+- **Typed client mirror** — `PhotoMetadataSchema` + `FaceInPhotoSchema`
+  added to `src/pick_face/web/app/src/lib/api/schemas.ts`,
+  `usePhotoMetadataQuery` hook + `api.getPhotoMetadata` client.
+
+#### Deferred (still M7.5)
+
+- PWA manifest + service worker (M7-T-9).
+- Playwright E2E (M7-T-10).
+- Sonner toast wrapper, `cmdk` global search, NC-research `Badge`
+  (M7-T-11/12/13).
+- Real EXIF fields (camera / GPS / exposure) in the side-sheet —
+  needs a separate backend endpoint.
+
+#### Tests added
+
+- 2 pytest cases in `tests/unit/test_api_routes.py` for the extended
+  `/meta` (with/without faces).
+- 3 pytest cases in `tests/unit/test_service_photo.py` for
+  `get_photo_metadata` (with/without faces, 404).
+- 8 Vitest cases in `FaceOverlay.test.tsx` for bbox rendering + the
+  `highlightClusterId` filter logic.
+- 7 Vitest cases in `PhotoMetaSheet.test.tsx` for the drawer
+  (loading / error / success / empty-faces / gating by `open`).
+
+Regression: 388 pytest passing (+5), 34 Vitest passing (+15), `pnpm
+build` clean (1757 modules, 499 KB JS / 22 KB CSS).
+
+#### Files touched
+
+| Category | New | Modified |
+|---|---|---|
+| Backend | — | `src/pick_face/service/photo_service.py`, `src/pick_face/api/photos.py` |
+| Frontend | `src/pick_face/web/app/src/components/ui/sheet.tsx`, `src/pick_face/web/app/src/components/persons/PhotoMetaSheet.tsx`, `src/pick_face/web/app/src/components/viewer/FaceOverlay.tsx` (+8 tests), `src/pick_face/web/app/src/components/persons/PhotoMetaSheet.test.tsx` (+7 tests) | `src/pick_face/web/app/src/lib/api/{schemas,client,hooks}.ts`, `src/pick_face/web/app/src/components/viewer/FaceViewer.tsx`, `src/pick_face/web/app/src/pages/PersonDetailPage.tsx` |
+| Tests | — | `tests/unit/test_api_routes.py`, `tests/unit/test_service_photo.py` |
+| Docs | — | `CHANGELOG.md`, `docs/03-architecture-design.md`, `docs/06-engineering-plan.md` |
+
 ---
 
 ## [2.1.0] - 2026-08-10 — High-precision tier (yunet-arcface)
