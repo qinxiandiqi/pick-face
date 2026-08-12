@@ -10,12 +10,45 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 
 def _layout(tmp_pure: Path):
     from pick_face.service.paths import get_layout
 
     return get_layout(data_dir=tmp_pure / "app")
+
+
+def _make_jpg_with_exif(path: Path, **tags) -> None:
+    """Same shape as the helper in test_service_photo — keep them in sync."""
+    from PIL import ExifTags
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    im = Image.new("RGB", (640, 480), (10, 20, 30))
+    exif = im.getexif()
+    if tags.get("make") is not None:
+        exif[ExifTags.Base.Make] = tags["make"]
+    if tags.get("model") is not None:
+        exif[ExifTags.Base.Model] = tags["model"]
+    if tags.get("taken_at") is not None:
+        exif[ExifTags.Base.DateTimeOriginal] = tags["taken_at"]
+    if tags.get("lens") is not None:
+        exif[ExifTags.Base.LensModel] = tags["lens"]
+    if tags.get("exposure") is not None:
+        exif[ExifTags.Base.ExposureTime] = tags["exposure"]
+    if tags.get("f_number") is not None:
+        exif[ExifTags.Base.FNumber] = tags["f_number"]
+    if tags.get("iso") is not None:
+        exif[ExifTags.Base.ISOSpeedRatings] = tags["iso"]
+    if tags.get("focal_length") is not None:
+        exif[ExifTags.Base.FocalLength] = tags["focal_length"]
+    if tags.get("gps_lat") is not None and tags.get("gps_lon") is not None:
+        gps = exif.get_ifd(ExifTags.IFD.GPSInfo)
+        gps[1] = tags.get("gps_lat_ref", "N")
+        gps[2] = tags["gps_lat"]
+        gps[3] = tags.get("gps_lon_ref", "W")
+        gps[4] = tags["gps_lon"]
+    im.save(path, "JPEG", exif=exif.tobytes())
 
 
 @pytest.fixture()
@@ -313,3 +346,97 @@ def test_photo_meta_empty_faces(client, tmp_pure: Path) -> None:
     r = client.get(f"/api/photos/{photo_id}/meta")
     assert r.status_code == 200
     assert r.json()["faces"] == []
+
+
+# ---------------------------------------------------------------------------
+# M7.6 — EXIF block in /api/photos/{id}/meta response
+# ---------------------------------------------------------------------------
+
+
+def test_photo_meta_includes_exif_block(client, tmp_pure: Path) -> None:
+    """The /meta response carries an ``exif`` dict with the camera /
+    GPS / exposure fields populated by the service layer's ``get_exif``."""
+    from pick_face.store.index import open_db
+
+    layout = client.app.state.layout
+    img_path = tmp_pure / "exif.jpg"
+    _make_jpg_with_exif(
+        img_path,
+        make="Canon",
+        model="EOS R6",
+        taken_at="2024:06:15 14:30:00",
+        lens="RF 50mm F1.2 L USM",
+        exposure=(1, 200),
+        f_number=(28, 10),
+        iso=400,
+        focal_length=(50, 1),
+        gps_lat=(37, 30, 0),
+        gps_lon=(122, 5, 0),
+        gps_lat_ref="N",
+        gps_lon_ref="W",
+    )
+    conn = open_db(layout.db_path)
+    cur = conn.execute(
+        "INSERT INTO source(path, rel_path, size, mtime, hash, status, "
+        "                  first_seen, last_seen) "
+        "VALUES (?, ?, ?, ?, ?, 'ok', 0, 0)",
+        (str(img_path), "exif.jpg", img_path.stat().st_size, 1.0, "exifhash"),
+    )
+    photo_id = int(cur.lastrowid)
+    conn.commit()
+    conn.close()
+
+    r = client.get(f"/api/photos/{photo_id}/meta")
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert "exif" in j
+    exif = j["exif"]
+    assert exif["make"] == "Canon"
+    assert exif["model"] == "EOS R6"
+    assert exif["lens"] == "RF 50mm F1.2 L USM"
+    assert exif["iso"] == 400
+    assert exif["exposure"] == pytest.approx(1 / 200, abs=1e-6)
+    assert exif["f_number"] == pytest.approx(2.8, abs=1e-6)
+    assert exif["focal_length"] == pytest.approx(50.0)
+    assert exif["gps_lat"] == pytest.approx(37.5, abs=1e-3)
+    # Longitude is West → negative decimal degrees.
+    assert exif["gps_lon"] == pytest.approx(-(122 + 5 / 60), abs=1e-3)
+    # taken_at → epoch seconds.
+    assert exif["taken_at"] is not None
+    assert exif["taken_at"] > 1_700_000_000  # 2024-ish
+
+
+def test_photo_meta_exif_all_null_when_no_tags(client, tmp_pure: Path) -> None:
+    """A photo with no EXIF tags returns exif with every field None
+    (not 404 / not absent)."""
+    from pick_face.store.index import open_db
+
+    layout = client.app.state.layout
+    img_path = tmp_pure / "plain.jpg"
+    Image.new("RGB", (640, 480), (1, 2, 3)).save(img_path, "JPEG")
+    conn = open_db(layout.db_path)
+    cur = conn.execute(
+        "INSERT INTO source(path, rel_path, size, mtime, hash, status, "
+        "                  first_seen, last_seen) "
+        "VALUES (?, ?, ?, ?, ?, 'ok', 0, 0)",
+        (str(img_path), "plain.jpg", img_path.stat().st_size, 1.0, "plainhash"),
+    )
+    photo_id = int(cur.lastrowid)
+    conn.commit()
+    conn.close()
+
+    r = client.get(f"/api/photos/{photo_id}/meta")
+    assert r.status_code == 200
+    exif = r.json()["exif"]
+    assert exif == {
+        "make": None,
+        "model": None,
+        "taken_at": None,
+        "lens": None,
+        "exposure": None,
+        "f_number": None,
+        "iso": None,
+        "focal_length": None,
+        "gps_lat": None,
+        "gps_lon": None,
+    }

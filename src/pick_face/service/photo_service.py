@@ -18,12 +18,14 @@ the user put it.
 
 from __future__ import annotations
 
+import datetime as _dt
 import io
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from PIL import Image
+from PIL import Image, ExifTags
 
 from pick_face.core.hashing import content_hash
 from pick_face.store.index import open_db
@@ -34,6 +36,77 @@ from .paths import AppLayout, get_layout
 # Thumbnail target size — see docs/03 §2.4 + docs/05 §4.2.
 THUMB_SIZE: tuple[int, int] = (256, 256)
 THUMB_JPEG_QUALITY = 85
+
+# Cache of EXIF tag-name lookups — populated lazily so we don't pay the
+# module import cost when callers never touch EXIF.
+_BASE_TAGS: dict[int, str] | None = None
+_GPS_TAGS: dict[int, str] | None = None
+
+
+def _base_tags() -> dict[int, str]:
+    global _BASE_TAGS
+    if _BASE_TAGS is None:
+        _BASE_TAGS = {int(k): str(v) for k, v in ExifTags.TAGS.items()}
+    return _BASE_TAGS
+
+
+def _gps_tags() -> dict[int, str]:
+    global _GPS_TAGS
+    if _GPS_TAGS is None:
+        _GPS_TAGS = {int(k): str(v) for k, v in ExifTags.GPSTAGS.items()}
+    return _GPS_TAGS
+
+
+def _rational_to_float(value: Any) -> float | None:
+    """EXIF rationals are tuples like (num, den). Return num/den."""
+    if value is None:
+        return None
+    if isinstance(value, tuple) and len(value) == 2:
+        num, den = value
+        try:
+            num_f = float(num)
+            den_f = float(den)
+            if den_f == 0:
+                return None
+            return num_f / den_f
+        except (TypeError, ValueError):
+            return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _dms_to_decimal(dms: Any, ref: Any) -> float | None:
+    """Convert (deg, min, sec) rational triple + 'N'/'S'/'E'/'W' ref
+    into signed decimal degrees.
+    """
+    if not isinstance(dms, tuple) or len(dms) != 3:
+        return None
+    try:
+        deg = float(dms[0])
+        minutes = float(dms[1])
+        seconds = float(dms[2])
+    except (TypeError, ValueError):
+        return None
+    decimal = deg + minutes / 60.0 + seconds / 3600.0
+    if ref in ("S", "W"):
+        decimal = -decimal
+    return decimal
+
+
+def _parse_exif_datetime(s: Any) -> float | None:
+    """Parse EXIF 'YYYY:MM:DD HH:MM:SS' into epoch seconds (UTC).
+
+    EXIF stores naive local time without a timezone — we treat it as
+    UTC for storage. The display layer may apply a user offset later.
+    """
+    if not isinstance(s, str):
+        return None
+    try:
+        dt = _dt.datetime.strptime(s, "%Y:%m:%d %H:%M:%S")
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=_dt.timezone.utc).timestamp()
 
 
 @dataclass
@@ -84,6 +157,27 @@ class PhotoMetadata:
     natural_width: int | None
     natural_height: int | None
     faces: list[FaceRecord]
+
+
+@dataclass
+class ExifRecord:
+    """EXIF tags extracted from the photo file via PIL.
+
+    Every field is optional — a stripped JPEG or a PNG returns all-None.
+    Coordinates are in original-image pixel space; ``taken_at`` is
+    epoch seconds (UTC, since EXIF stores no timezone).
+    """
+
+    make: str | None = None
+    model: str | None = None
+    taken_at: float | None = None
+    lens: str | None = None
+    exposure: float | None = None
+    f_number: float | None = None
+    iso: int | None = None
+    focal_length: float | None = None
+    gps_lat: float | None = None
+    gps_lon: float | None = None
 
 
 class PhotoNotFoundError(LookupError):
@@ -189,6 +283,60 @@ class PhotoService:
             natural_width=natural_w,
             natural_height=natural_h,
             faces=faces,
+        )
+
+    def get_exif(self, photo_id: int) -> ExifRecord:
+        """Read EXIF tags from the photo file. Returns all-None for
+        photos without EXIF (PNGs, stripped JPEGs) or that fail to open.
+
+        Cheap: single PIL ``Image.open()`` (no decode) + ``getexif()``,
+        no DB I/O beyond the row lookup.
+        """
+        rec = self.get_photo(photo_id)
+        if not rec.path.exists():
+            return ExifRecord()
+        try:
+            with Image.open(rec.path) as im:
+                raw = im.getexif()
+                if raw is None:
+                    return ExifRecord()
+                gps_raw = raw.get_ifd(ExifTags.IFD.GPSInfo) if hasattr(ExifTags.IFD, "GPSInfo") else {}
+        except (OSError, Image.DecompressionBombError, SyntaxError):
+            # SyntaxError surfaces from PIL when EXIF bytes are corrupt.
+            return ExifRecord()
+
+        # Camera make/model often contain trailing NULs — strip them.
+        def _clean_str(v: Any) -> str | None:
+            if not isinstance(v, str):
+                return None
+            return v.rstrip("\x00").strip() or None
+
+        # EXIF date format: "YYYY:MM:DD HH:MM:SS"
+        return ExifRecord(
+            make=_clean_str(raw.get(ExifTags.Base.Make)),
+            model=_clean_str(raw.get(ExifTags.Base.Model)),
+            taken_at=_parse_exif_datetime(raw.get(ExifTags.Base.DateTimeOriginal)),
+            lens=_clean_str(raw.get(ExifTags.Base.LensModel)),
+            exposure=_rational_to_float(raw.get(ExifTags.Base.ExposureTime)),
+            f_number=_rational_to_float(raw.get(ExifTags.Base.FNumber)),
+            iso=(
+                int(raw.get(ExifTags.Base.ISOSpeedRatings))
+                if raw.get(ExifTags.Base.ISOSpeedRatings) is not None
+                else None
+            ),
+            focal_length=_rational_to_float(raw.get(ExifTags.Base.FocalLength)),
+            gps_lat=_dms_to_decimal(
+                gps_raw.get(2),
+                gps_raw.get(1),
+            )
+            if gps_raw
+            else None,
+            gps_lon=_dms_to_decimal(
+                gps_raw.get(4),
+                gps_raw.get(3),
+            )
+            if gps_raw
+            else None,
         )
 
     def get_photo_path(self, photo_id: int) -> Path:

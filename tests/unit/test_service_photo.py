@@ -19,6 +19,45 @@ def _make_jpg(path: Path, color=(255, 0, 0)) -> None:
     Image.new("RGB", (640, 480), color).save(path, "JPEG")
 
 
+def _make_jpg_with_exif(path: Path, *, make="Canon", model="EOS R6",
+                        taken_at="2024:06:15 14:30:00",
+                        lens="RF 50mm F1.2 L USM",
+                        exposure=(1, 200), f_number=(28, 10),
+                        iso=400, focal_length=(50, 1),
+                        gps_lat=None, gps_lon=None,
+                        gps_lat_ref="N", gps_lon_ref="W") -> None:
+    """Write a JPEG with EXIF tags via PIL. ``gps_lat``/``gps_lon`` are
+    DMS tuples like ``(deg, min, sec)``."""
+    from PIL import ExifTags
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    im = Image.new("RGB", (640, 480), (10, 20, 30))
+    exif = im.getexif()
+    if make is not None:
+        exif[ExifTags.Base.Make] = make
+    if model is not None:
+        exif[ExifTags.Base.Model] = model
+    if taken_at is not None:
+        exif[ExifTags.Base.DateTimeOriginal] = taken_at
+    if lens is not None:
+        exif[ExifTags.Base.LensModel] = lens
+    if exposure is not None:
+        exif[ExifTags.Base.ExposureTime] = exposure
+    if f_number is not None:
+        exif[ExifTags.Base.FNumber] = f_number
+    if iso is not None:
+        exif[ExifTags.Base.ISOSpeedRatings] = iso
+    if focal_length is not None:
+        exif[ExifTags.Base.FocalLength] = focal_length
+    if gps_lat is not None and gps_lon is not None:
+        gps = exif.get_ifd(ExifTags.IFD.GPSInfo)
+        gps[1] = gps_lat_ref
+        gps[2] = gps_lat
+        gps[3] = gps_lon_ref
+        gps[4] = gps_lon
+    im.save(path, "JPEG", exif=exif.tobytes())
+
+
 def _insert_source(layout, path: Path, content_hash: str = "") -> int:
     from pick_face.store.index import open_db
 
@@ -217,3 +256,111 @@ def test_get_photo_metadata_404(tmp_pure: Path) -> None:
     layout = _layout(tmp_pure)
     with pytest.raises(PhotoNotFoundError):
         PhotoService(layout).get_photo_metadata(999)
+
+
+# ---------------------------------------------------------------------------
+# M7.6 — EXIF extraction (pick_face.service.photo_service.ExifRecord)
+# ---------------------------------------------------------------------------
+
+
+def test_get_exif_full_payload(tmp_pure: Path) -> None:
+    """All common tags: make, model, taken_at, lens, exposure, ISO,
+    focal length, GPS."""
+    from pick_face.service.photo_service import ExifRecord, PhotoService
+
+    layout = _layout(tmp_pure)
+    p = tmp_pure / "p.jpg"
+    _make_jpg_with_exif(
+        p,
+        make="Canon",
+        model="EOS R6",
+        taken_at="2024:06:15 14:30:00",
+        lens="RF 50mm F1.2 L USM",
+        exposure=(1, 200),
+        f_number=(28, 10),       # f/2.8
+        iso=400,
+        focal_length=(50, 1),    # 50mm
+        gps_lat=(37, 30, 0),
+        gps_lon=(122, 5, 0),
+    )
+    pid = _insert_source(layout, p)
+    rec = PhotoService(layout).get_exif(pid)
+    assert isinstance(rec, ExifRecord)
+    assert rec.make == "Canon"
+    assert rec.model == "EOS R6"
+    assert rec.lens == "RF 50mm F1.2 L USM"
+    # Date parsed as epoch seconds — 2024-06-15 14:30:00 UTC.
+    import datetime as _dt
+    expected_epoch = _dt.datetime(2024, 6, 15, 14, 30, 0, tzinfo=_dt.timezone.utc).timestamp()
+    assert rec.taken_at == pytest.approx(expected_epoch, abs=1)
+    # Exposure 1/200s = 0.005s
+    assert rec.exposure == pytest.approx(1 / 200, abs=1e-6)
+    assert rec.f_number == pytest.approx(2.8, abs=1e-6)
+    assert rec.iso == 400
+    assert rec.focal_length == pytest.approx(50.0)
+    # GPS 37°30'00" N + 122°05'00" W → 37.5 / -122.0833
+    assert rec.gps_lat == pytest.approx(37.5, abs=1e-3)
+    assert rec.gps_lon == pytest.approx(-122 + (-5 / 60), abs=1e-3)
+
+
+def test_get_exif_no_tags_returns_all_none(tmp_pure: Path) -> None:
+    """A plain JPEG (no EXIF) returns an ExifRecord with every field None."""
+    from pick_face.service.photo_service import ExifRecord, PhotoService
+
+    layout = _layout(tmp_pure)
+    p = tmp_pure / "plain.jpg"
+    _make_jpg(p)
+    pid = _insert_source(layout, p)
+    rec = PhotoService(layout).get_exif(pid)
+    assert rec == ExifRecord()
+
+
+def test_get_exif_partial_tags(tmp_pure: Path) -> None:
+    """A photo with only some tags returns just those (the rest stay None)."""
+    from pick_face.service.photo_service import PhotoService
+
+    layout = _layout(tmp_pure)
+    p = tmp_pure / "partial.jpg"
+    _make_jpg_with_exif(
+        p,
+        make=None, model=None, taken_at=None, lens=None,
+        exposure=None, f_number=None, iso=None, focal_length=None,
+    )
+    pid = _insert_source(layout, p)
+    rec = PhotoService(layout).get_exif(pid)
+    assert rec.make is None
+    assert rec.taken_at is None
+    assert rec.exposure is None
+    assert rec.gps_lat is None
+
+
+def test_get_exif_missing_file_returns_all_none(tmp_pure: Path) -> None:
+    """Source row exists but the file is gone → silent ExifRecord()."""
+    from pick_face.service.photo_service import ExifRecord, PhotoService
+
+    layout = _layout(tmp_pure)
+    ghost = tmp_pure / "ghost.jpg"  # never written
+    pid = _insert_source(layout, ghost)
+    rec = PhotoService(layout).get_exif(pid)
+    assert rec == ExifRecord()
+
+
+def test_get_exif_404(tmp_pure: Path) -> None:
+    from pick_face.service.photo_service import PhotoNotFoundError, PhotoService
+
+    layout = _layout(tmp_pure)
+    with pytest.raises(PhotoNotFoundError):
+        PhotoService(layout).get_exif(999)
+
+
+def test_get_exif_strips_trailing_nul(tmp_pure: Path) -> None:
+    """Some cameras pad make/model with NULs — strip them."""
+    from pick_face.service.photo_service import PhotoService
+
+    layout = _layout(tmp_pure)
+    p = tmp_pure / "nul.jpg"
+    _make_jpg_with_exif(p, make="Canon\x00\x00", model="EOS R6\x00")
+    pid = _insert_source(layout, p)
+    rec = PhotoService(layout).get_exif(pid)
+    assert rec.make == "Canon"
+    assert rec.model == "EOS R6"

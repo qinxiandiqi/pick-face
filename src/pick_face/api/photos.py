@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse
 
 from pick_face.api.deps import get_photo_service
 from pick_face.service.photo_service import (
+    ExifRecord,
     PhotoAccessError,
     PhotoNotFoundError,
     PhotoService,
@@ -93,16 +94,32 @@ def get_photo_meta(
               "quality": float | null
             },
             ...
-          ]
+          ],
+          "exif": {
+            "make": str | null,
+            "model": str | null,
+            "taken_at": float | null,       # epoch seconds (UTC)
+            "lens": str | null,
+            "exposure": float | null,       # seconds
+            "f_number": float | null,
+            "iso": int | null,
+            "focal_length": float | null,   # mm
+            "gps_lat": float | null,
+            "gps_lon": float | null
+          }
         }
 
     M7.5: extended to include faces for the SVG bbox overlay (M7-T-6)
     and the PersonDetailPage EXIF side-sheet (M7-T-8).
+    M7.6: ``exif`` block added so the side-sheet can render camera /
+    GPS / exposure data. All fields are optional — stripped JPEGs and
+    PNGs return all-null.
     """
     try:
         meta = svc.get_photo_metadata(photo_id)
     except PhotoNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    exif: ExifRecord = svc.get_exif(photo_id)
     return {
         "id": meta.id,
         "path": str(meta.path),
@@ -128,6 +145,18 @@ def get_photo_meta(
             }
             for f in meta.faces
         ],
+        "exif": {
+            "make": exif.make,
+            "model": exif.model,
+            "taken_at": exif.taken_at,
+            "lens": exif.lens,
+            "exposure": exif.exposure,
+            "f_number": exif.f_number,
+            "iso": exif.iso,
+            "focal_length": exif.focal_length,
+            "gps_lat": exif.gps_lat,
+            "gps_lon": exif.gps_lon,
+        },
     }
 
 
