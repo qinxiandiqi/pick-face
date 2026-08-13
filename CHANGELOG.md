@@ -552,6 +552,84 @@ Regression: 399 pytest passing (+3), 51 Vitest passing (+6),
 | Tests | `tests/unit/test_api_routes.py` (+3) |
 | Docs | `CHANGELOG.md`, `docs/03-architecture-design.md` (§1.4 status, §7.2 table), `docs/06-engineering-plan.md` (§2.1 M7-T-13) |
 
+### M7.9 — PWA manifest + service worker + offline app shell (M7-T-9)
+
+Closes the PRD promise in `docs/01-product-requirement.md:126`
+("手机 App: v3 只做 Web；PWA 已能满足 90% 移动端"). pick-face is now
+installable, runs offline for the SPA shell + cached thumbnails, and
+lets the user check for updates without an auto-reload surprise.
+
+#### What's new
+
+- **`vite-plugin-pwa@^0.21.2` + `workbox-window@^7.3.0`** added as
+  devDependencies (no runtime cost — the wheel is unchanged).
+- **`public/manifest.webmanifest`** — standalone, scope `/`, theme
+  `#2a6df4`, 3 icons (192/512/maskable 512). Icons are pre-generated PNGs
+  committed to the repo; a `scripts/build-icons.mjs` recipe (not in CI)
+  documents how to rebuild them.
+- **`vite.config.ts` — `VitePWA({ registerType: 'prompt',
+  injectRegister: 'script', strategies: 'generateSW' })`** emits
+  `sw.js` + `registerSW.js` + `workbox-*.js`. Caching:
+  - App shell (`navigateFallback: '/index.html'`)
+  - `/api/photos/{id}/thumb` → `CacheFirst`, 30 days, 256 entries
+  - `/api/persons{,/{id}/photos}` → `StaleWhileRevalidate`, 1 h, 32 entries
+  - `/api/photos/{id}` (original, Range) → Workbox's default
+    `RangeRequestsPlugin` (no explicit `runtimeCaching` rule, so
+    Range responses stream correctly)
+  - `/api/scan/jobs/{id}/events` (SSE) → never cached (denied by both
+    `navigateFallbackDenylist: [/^\/api\//]` and the absence of a rule)
+- **`src/lib/pwa.ts`** — single side-effect entry point. Production-gated
+  via `import.meta.env.PROD`. `onNeedRefresh` →
+  `toast.info("New version available", { duration: 0, action: { label:
+  "Reload", onClick: updateSW(true) } })`; `onOfflineReady` →
+  `toast.success("Ready to work offline")`. `refreshPwa()` exposes a
+  manual "check + apply, no reload" hook for the Settings button.
+- **`<InstallAppButton>`** — captures `beforeinstallprompt`, only
+  renders the button when the event fires and `matchMedia("(display-mode:
+  standalone)")` is false. Click → `evt.prompt()` → toast with the
+  user-choice outcome. No auto-prompt — install is user-initiated.
+- **`<PwaSettingsCard>`** + **Settings → App tab** (4th tab) — wraps
+  the install button and a "Check for update" button.
+- **`toast.ts` ToastOptions** gained an optional `action: { label,
+  onClick }` slot so the SW update prompt can render an inline button
+  via sonner's native action API (no second toaster layer).
+
+#### Tests added
+
+- 6 Vitest cases in
+  `src/components/settings/InstallAppButton.test.tsx`:
+  hidden-before-event, hidden-when-standalone, renders-after-event,
+  click-prompt-success, click-prompt-dismissed, appinstalled-hides.
+- 2 Vitest cases in
+  `src/components/settings/PwaSettingsCard.test.tsx`: renders the PWA
+  badge + check-update button; click → `refreshPwa()`.
+- 3 Vitest cases in `src/lib/pwa.test.ts`: `initPwa()` no-op in dev,
+  idempotent across calls, `refreshPwa()` resolves undefined.
+- `src/test-setup.ts` — stubs `navigator.serviceWorker` and adds
+  `vi.restoreAllMocks()` in `afterEach` (jsdom doesn't ship service
+  worker, the new tests need it).
+- `vitest.config.ts` — aliases `virtual:pwa-register` to a tiny shim
+  (`src/test-shims/pwa-register.ts`) since the VitePWA virtual module
+  only resolves at build time, not under vitest.
+
+Regression: 399 pytest passing (unchanged — no Python touched),
+62 Vitest passing (+11), `pnpm build` emits
+`sw.js` + `registerSW.js` + `workbox-*.js` + `manifest.webmanifest`
++ `icons/icon-{192,512,mask}.png` into `web/static/` (all 4 PNG/SW
+paths verified gitignored via `git check-ignore -v`).
+
+#### Files touched
+
+| Category | Modified |
+|---|---|
+| Build | `src/pick_face/web/app/vite.config.ts` (VitePWA plugin), `src/pick_face/web/app/index.html` (`<link rel="manifest">` + `theme-color`), `src/pick_face/web/app/vitest.config.ts` (virtual:pwa-register shim) |
+| Frontend | `src/pick_face/web/app/src/lib/pwa.ts` (new), `src/pick_face/web/app/src/lib/toast.ts` (`action` slot), `src/pick_face/web/app/src/main.tsx` (side-effect import), `src/pick_face/web/app/src/vite-env.d.ts` (triple-slash reference), `src/pick_face/web/app/src/pages/SettingsPage.tsx` (4th tab), `src/pick_face/web/app/src/components/settings/InstallAppButton.tsx` (new), `src/pick_face/web/app/src/components/settings/PwaSettingsCard.tsx` (new), `src/pick_face/web/app/src/test-setup.ts` (serviceWorker stub) |
+| PWA assets | `src/pick_face/web/app/public/manifest.webmanifest` (new), `src/pick_face/web/app/public/icons/icon-{192,512,mask}.png` (new) |
+| Tests | `src/pick_face/web/app/src/lib/pwa.test.ts` (new), `src/pick_face/web/app/src/components/settings/InstallAppButton.test.tsx` (new), `src/pick_face/web/app/src/components/settings/PwaSettingsCard.test.tsx` (new) |
+| Repo | `.gitignore` (widened `web/static/` → directory form), `src/pick_face/web/app/package.json` (+ `vite-plugin-pwa`, `workbox-window`), `pnpm-lock.yaml` |
+| CI | `.github/workflows/ci.yml` + `.github/workflows/release.yml` (4-file `test -f` guard for PWA artifacts) |
+| Docs | `CHANGELOG.md`, `docs/03-architecture-design.md` (§7 status), `docs/06-engineering-plan.md` (§2.1 M7-T-9 row + §2.2 AC-W10) |
+
 ---
 
 ## [2.1.0] - 2026-08-10 — High-precision tier (yunet-arcface)

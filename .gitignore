@@ -285,9 +285,9 @@ playwright/.cache/
 # before `uv build`, so the wheel always carries the freshest bundle.
 # We never commit built artifacts; this also keeps the source-only sdist
 # (see pyproject.toml [tool.hatch.build.targets.sdist] exclude) honest.
-src/pick_face/web/static/index.html
-src/pick_face/web/static/assets/
-src/pick_face/web/static/favicon.svg
+# M7.9 — PWA emits sw.js / registerSW.js / manifest.webmanifest / icons/
+# alongside the JS bundle; the directory-wide rule covers everything.
+src/pick_face/web/static/
 
 # ============================================================
 # 14. 大文件 / 二进制

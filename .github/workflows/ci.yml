@@ -66,8 +66,15 @@ jobs:
       - working-directory: src/pick_face/web/app
         run: pnpm build
 
-      - name: Verify vite emitted index.html
-        run: test -f src/pick_face/web/static/index.html
+      - name: Verify vite emitted PWA + shell artifacts (M7.9)
+        run: |
+          test -f src/pick_face/web/static/index.html
+          test -f src/pick_face/web/static/manifest.webmanifest
+          test -f src/pick_face/web/static/sw.js
+          test -f src/pick_face/web/static/registerSW.js
+          test -f src/pick_face/web/static/icons/icon-192.png
+          test -f src/pick_face/web/static/icons/icon-512.png
+          test -f src/pick_face/web/static/icons/icon-mask.png
 
       - name: AC-9 frontend guard (no *.onnx refs in SPA source)
         run: |

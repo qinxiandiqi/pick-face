@@ -14,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { PathList } from "@/components/settings/PathList";
 import { PathAddDialog } from "@/components/settings/PathAddDialog";
 import { ModelPackCard } from "@/components/settings/ModelPackCard";
+import { PwaSettingsCard } from "@/components/settings/PwaSettingsCard";
 import { Button } from "@/components/ui/button";
 import { useReadyQuery, useStartScanMutation } from "@/lib/api/hooks";
 import { toast } from "@/lib/toast";
@@ -59,6 +60,7 @@ export function SettingsPage(): React.JSX.Element {
           <TabsTrigger value="paths">Paths</TabsTrigger>
           <TabsTrigger value="scan">Scan</TabsTrigger>
           <TabsTrigger value="model">Model</TabsTrigger>
+          <TabsTrigger value="app">App</TabsTrigger>
         </TabsList>
 
         <TabsContent value="paths" className="space-y-4">
@@ -158,6 +160,10 @@ export function SettingsPage(): React.JSX.Element {
               <ModelPackCard pack={ready?.active_pack ?? null} isLoading={!ready} />
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="app" className="space-y-4">
+          <PwaSettingsCard />
         </TabsContent>
       </Tabs>
     </div>

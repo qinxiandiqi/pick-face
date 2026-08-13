@@ -26,11 +26,25 @@ const DEFAULT_ERROR_MS = 6_000;
 // Public surface — drop-in replacement for the sonner API.
 // ---------------------------------------------------------------------------
 
+export interface ToastAction {
+  /** Short label rendered as a button inside the toast. */
+  label: string;
+  /** Click handler. Keep it side-effect-only — sonner does not await it. */
+  onClick: () => void;
+}
+
 export interface ToastOptions {
   /** Optional secondary line shown below the title. */
   description?: string;
   /** Override the auto-dismiss timer (ms). 0 disables auto-dismiss. */
   duration?: number;
+  /**
+   * Optional inline action button (e.g. "Reload" for service-worker
+   * updates). Sonner renders this as a tappable button at the right of
+   * the toast. The toast itself does NOT auto-dismiss when the action is
+   * clicked — call sites are responsible for follow-up UX.
+   */
+  action?: ToastAction;
 }
 
 /** Success toast — operation completed. Defaults to 4s dismiss. */
@@ -38,6 +52,7 @@ export function success(message: string, opts: ToastOptions = {}): void {
   sonnerToast.success(message, {
     description: opts.description,
     duration: opts.duration ?? DEFAULT_SUCCESS_MS,
+    action: opts.action,
   });
 }
 
@@ -46,6 +61,7 @@ export function error(message: string, opts: ToastOptions = {}): void {
   sonnerToast.error(message, {
     description: opts.description,
     duration: opts.duration ?? DEFAULT_ERROR_MS,
+    action: opts.action,
   });
 }
 
@@ -54,6 +70,7 @@ export function info(message: string, opts: ToastOptions = {}): void {
   sonnerToast(message, {
     description: opts.description,
     duration: opts.duration ?? DEFAULT_SUCCESS_MS,
+    action: opts.action,
   });
 }
 
@@ -62,6 +79,7 @@ export function warning(message: string, opts: ToastOptions = {}): void {
   sonnerToast.warning(message, {
     description: opts.description,
     duration: opts.duration ?? DEFAULT_ERROR_MS,
+    action: opts.action,
   });
 }
 

@@ -70,7 +70,7 @@ v2.x（M0–M5）已经把"CLI 工具 + 算法内核 + Model Pack 架构"做完�
 | M7-T-6 | `<FaceOverlay>` 在图上画 bbox ✅ M7.5（服务端 bbox + 客户端 SVG overlay + highlightClusterId 过滤） | M7-T-1 |
 | M7-T-7 | `api/photos/{id}/metadata` bbox + faces + 自然尺寸 + EXIF ✅ M7.6 | — |
 | M7-T-8 | 信息层抽屉（路径/尺寸/人脸/EXIF 占位） ✅ M7.5（EXIF 占位等后端） | M7-T-7 |
-| M7-T-9 | PWA manifest + service worker ⏸️ M7.5 | M7-T-1 |
+| M7-T-9 | PWA manifest + service worker ✅ M7.9（vite-plugin-pwa 0.21.2；workbox generateSW；app shell + `/api/photos/{id}/thumb` CacheFirst 30d + `/api/persons{,/{id}/photos}` SWR 1h；`RangeRequestsPlugin` 默认处理原图；`Settings → App` 手动 install 按钮 + 受控 update toast；`registerSW.js` + `sw.js` + `manifest.webmanifest` + 3 个 PNG icons；`AC-W10` ✅） | M7-T-1 |
 | M7-T-10 | 浏览器 E2E 测试（Playwright）⏸️ M7.5 | M7-T-1 |
 | M7-T-11 | `Toast` (sonner) 错误反馈统一封装 ✅ M7.7（`lib/toast.ts` 门面 + `toast.fromError` 收口） | M6-T-11b |
 | M7-T-12 | 全局 `Command` (cmdk) 搜索（按人名 / 路径 / EXIF）⏸️ M7.5 | M6-T-11b |
@@ -80,6 +80,7 @@ v2.x（M0–M5）已经把"CLI 工具 + 算法内核 + Model Pack 架构"做完�
 
 - AC-W6：上一张 / 下一张 / 缩放 / 拖动 ✅
 - 移动端手势（pinch、swipe、tap）✅
+- AC-W10：PWA 可安装（`Settings → App → Install app`）+ 离线壳加载（`navigator.onLine === false` 下 `/` 仍可渲染）+ 二次访问瀑布流缩略图命中 SW 缓存 ✅（M7.9）
 
 ## 3. M8 — 增量扫描 + watchdog + 周期重聚类
 
