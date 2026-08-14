@@ -51,18 +51,34 @@ class PersonService:
 
         The v2.x ``cluster.merged_into IS NULL`` predicate maps to
         ``persons.merged_into IS NULL`` in the v3 schema (see docs/05 §2).
+
+        M8-T-6: faces whose underlying photo is soft-deleted
+        (``source.status='removed'``) or vanished from disk
+        (``source.status='missing'``) are excluded from the face
+        count so the SPA waterfall doesn't surface "ghost" photos.
+        The counts are computed via correlated subqueries so empty
+        clusters (just-created, no faces assigned yet) still surface
+        with ``face_count=0``.
         """
         conn = open_db(self._layout.db_path)
         try:
             cur = conn.execute(
                 """
                 SELECT c.id, c.label,
-                       COUNT(DISTINCT f.id) AS face_count,
-                       COUNT(DISTINCT f.source_id) AS photo_count
+                       (
+                           SELECT COUNT(DISTINCT f.id)
+                           FROM face f
+                           JOIN source s ON s.id = f.source_id
+                           WHERE f.cluster_id = c.id AND s.status = 'active'
+                       ) AS face_count,
+                       (
+                           SELECT COUNT(DISTINCT f.source_id)
+                           FROM face f
+                           JOIN source s ON s.id = f.source_id
+                           WHERE f.cluster_id = c.id AND s.status = 'active'
+                       ) AS photo_count
                 FROM cluster c
-                LEFT JOIN face f ON f.cluster_id = c.id
                 WHERE c.merged_into IS NULL
-                GROUP BY c.id, c.label
                 ORDER BY face_count DESC, c.id ASC
                 LIMIT ? OFFSET ?
                 """,
@@ -96,12 +112,20 @@ class PersonService:
             cur = conn.execute(
                 """
                 SELECT c.id, c.label,
-                       COUNT(DISTINCT f.id),
-                       COUNT(DISTINCT f.source_id)
+                       (
+                           SELECT COUNT(DISTINCT f.id)
+                           FROM face f
+                           JOIN source s ON s.id = f.source_id
+                           WHERE f.cluster_id = c.id AND s.status = 'active'
+                       ),
+                       (
+                           SELECT COUNT(DISTINCT f.source_id)
+                           FROM face f
+                           JOIN source s ON s.id = f.source_id
+                           WHERE f.cluster_id = c.id AND s.status = 'active'
+                       )
                 FROM cluster c
-                LEFT JOIN face f ON f.cluster_id = c.id
                 WHERE c.id = ? AND c.merged_into IS NULL
-                GROUP BY c.id, c.label
                 """,
                 (person_id,),
             )
@@ -113,7 +137,7 @@ class PersonService:
                 SELECT DISTINCT s.path
                 FROM face f
                 JOIN source s ON s.id = f.source_id
-                WHERE f.cluster_id = ?
+                WHERE f.cluster_id = ? AND s.status = 'active'
                 """,
                 (person_id,),
             )
@@ -148,7 +172,7 @@ class PersonService:
                 SELECT DISTINCT s.id, s.path
                 FROM face f
                 JOIN source s ON s.id = f.source_id
-                WHERE f.cluster_id = ?
+                WHERE f.cluster_id = ? AND s.status = 'active'
                 ORDER BY s.mtime DESC, s.id ASC
                 LIMIT ? OFFSET ?
                 """,
@@ -177,7 +201,7 @@ class PersonService:
                 SELECT f.id, s.path, f.bbox_x1, f.bbox_y1, f.bbox_x2, f.bbox_y2
                 FROM face f
                 JOIN source s ON s.id = f.source_id
-                WHERE f.cluster_id = ?
+                WHERE f.cluster_id = ? AND s.status = 'active'
                 ORDER BY
                     COALESCE(f.quality, 0) DESC,
                     COALESCE(f.det_score, 0) DESC,

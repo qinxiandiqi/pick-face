@@ -13,6 +13,19 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1  # 当前 schema 版本号 (bump on every migration)
 
+# Valid values for `source.status`. M6 shipped `active` and `missing` (file
+# vanished from disk). M8 adds `removed` for user-driven soft-delete via
+# `DELETE /api/photos/{id}` (`docs/06 §3.1 M8-T-6`).
+#
+# The column has no CHECK constraint, so this is enforced at the write
+# sites (`_mark_missing`, `_mark_removed`, the scan DEL pass). Existing
+# DBs with `status='active'` rows continue to work — new soft-delete
+# operations simply transition active → removed.
+VALID_SOURCE_STATUSES: frozenset[str] = frozenset({"active", "missing", "removed"})
+
+# Default status applied to newly-discovered sources by `run_scan`.
+DEFAULT_SOURCE_STATUS = "active"
+
 # PRAGMAs applied on every connection open.
 # Reference: docs/05 §2.1.
 PRAGMAS: tuple[str, ...] = (

@@ -12,6 +12,17 @@
 
 The factory is the *only* public surface — ``web_cli.py`` imports
 ``create_app`` and hands it to ``uvicorn.run``.
+
+M8 — additional background services wired in the lifespan:
+- :class:`pick_face.service.file_watcher.FileWatcher` (watchdog → asyncio.Queue → ``ScanService.start(kind='path_only')``)
+- :class:`pick_face.service.polling_scheduler.PollingScheduler` (APScheduler fallback every ``incremental_interval_sec`` seconds)
+- :class:`pick_face.worker.cluster_worker.ClusterWorker` (periodic full recluster + incremental trigger on ``recluster_threshold`` new faces)
+- HNSW index preloaded via :func:`pick_face.worker.cluster_worker.ensure_hnsw_loaded`
+
+Any individual subsystem failure degrades that component to
+``status() == "disabled"``; the rest of the service still serves
+HTTP. This is what keeps a missing optional dep (hnswlib, hdbscan,
+watchdog) from taking down the Web UI.
 """
 
 from __future__ import annotations
@@ -25,7 +36,10 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from pick_face.api import config, health, persons, photos, scan
+from pick_face.service.file_watcher import FileWatcher
 from pick_face.service.paths import get_layout
+from pick_face.service.polling_scheduler import PollingScheduler
+from pick_face.worker.cluster_worker import ClusterWorker, ensure_hnsw_loaded
 from pick_face.worker.runner import make_runner
 
 log = logging.getLogger(__name__)
@@ -48,17 +62,82 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        import asyncio
+
         app.state.layout = layout
-        # Build runner + start its polling task. We don't *require*
-        # detector/embedder to be loaded — `make_runner` handles the
-        # missing-weights case by leaving them as None; the runner
-        # will fail-fast with a clear error if a job is submitted.
+        # ---- M6: scan runner ------------------------------------------------
         runner = make_runner(layout=layout)
         app.state.runner = runner
         runner.start()
+
+        # ---- M8: HNSW preload (M8-T-5) --------------------------------------
+        embedding_dim = _resolve_embedding_dim(runner)
+        hnsw_index = None
+        if embedding_dim is not None:
+            try:
+                hnsw_index = ensure_hnsw_loaded(layout, embedding_dim=embedding_dim)
+            except Exception as exc:  # pragma: no cover — defensive
+                log.warning("ensure_hnsw_loaded failed: %s", exc)
+        app.state.hnsw = hnsw_index
+        app.state.embedding_dim = embedding_dim
+
+        # ---- M8: cluster worker (M8-T-3 / T-4) -------------------------------
+        cluster_worker: ClusterWorker | None = None
+        if embedding_dim is not None:
+            try:
+                cluster_worker = ClusterWorker(
+                    layout,
+                    embedding_dim=embedding_dim,
+                    hnsw_index=hnsw_index,
+                )
+                # Register on the runner so DONE scans feed the
+                # unclustered-count trigger (M8-T-4).
+                runner._on_scan_complete = cluster_worker.note_scan_complete  # noqa: SLF001
+                cluster_worker.start()
+                app.state.cluster_worker = cluster_worker
+            except Exception as exc:  # pragma: no cover — defensive
+                log.warning("cluster_worker init failed: %s", exc)
+
+        # ---- M8: file watcher (M8-T-1) --------------------------------------
+        file_watcher: FileWatcher | None = None
+        try:
+            file_watcher = FileWatcher(
+                layout,
+                loop=asyncio.get_running_loop(),
+                runner=runner,
+            )
+            file_watcher.start()
+            app.state.file_watcher = file_watcher
+        except Exception as exc:  # pragma: no cover — defensive
+            log.warning("file_watcher init failed: %s", exc)
+
+        # ---- M8: polling scheduler (M8-T-2) ---------------------------------
+        polling: PollingScheduler | None = None
+        try:
+            polling = PollingScheduler(layout, runner=runner)
+            polling.start()
+            app.state.polling_scheduler = polling
+        except Exception as exc:  # pragma: no cover — defensive
+            log.warning("polling_scheduler init failed: %s", exc)
+
         try:
             yield
         finally:
+            # Stop in reverse order. Polling first so no new jobs
+            # land while the file watcher drains.
+            for stop_fn in (
+                (polling.stop if polling is not None else None),
+                (file_watcher.stop if file_watcher is not None else None),
+                (cluster_worker.stop if cluster_worker is not None else None),
+            ):
+                if stop_fn is None:
+                    continue
+                try:
+                    res = stop_fn()
+                    if hasattr(res, "__await__"):
+                        await res
+                except Exception as exc:  # pragma: no cover — defensive
+                    log.warning("lifespan stop error: %s", exc)
             await runner.stop()
 
     app = FastAPI(
@@ -96,6 +175,21 @@ def create_app(
 
 # Default app instance for `uvicorn pick_face.api.app:app` reload.
 app = create_app()
+
+
+def _resolve_embedding_dim(runner: object) -> int | None:
+    """Read ``embedder.dim`` off the runner if a pack is loaded.
+
+    Returns ``None`` when no embedder is loaded (test environments,
+    pre-init state). The cluster worker is skipped in that case.
+    """
+    embedder = getattr(runner, "_embedder", None)
+    if embedder is None:
+        return None
+    dim = getattr(embedder, "dim", None)
+    if not isinstance(dim, int) or dim <= 0:
+        return None
+    return dim
 
 
 __all__ = ["create_app", "app"]

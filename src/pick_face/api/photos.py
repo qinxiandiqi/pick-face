@@ -2,9 +2,10 @@
 
 Routes:
 
-- ``GET /api/photos/{id}``        original photo (HTTP Range supported)
-- ``GET /api/photos/{id}/thumb``  256×256 JPEG thumbnail (cached)
-- ``GET /api/photos/{id}/meta``   metadata (path, mtime, size, hash)
+- ``GET    /api/photos/{id}``        original photo (HTTP Range supported)
+- ``GET    /api/photos/{id}/thumb``  256×256 JPEG thumbnail (cached)
+- ``GET    /api/photos/{id}/meta``   metadata (path, mtime, size, hash)
+- ``DELETE /api/photos/{id}``        soft-delete (status='removed') — M8-T-6
 
 The bottleneck for both streaming and thumbnail is the
 ``PhotoService`` — never read the file paths directly. The whitelist
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
 from pick_face.api.deps import get_photo_service
@@ -158,6 +159,27 @@ def get_photo_meta(
             "gps_lon": exif.gps_lon,
         },
     }
+
+
+@router.delete("/{photo_id}", status_code=204)
+def delete_photo(
+    photo_id: int,
+    svc: PhotoService = Depends(get_photo_service),
+) -> Response:
+    """Soft-delete a photo (`status='removed'`).
+
+    M8-T-6 (`docs/06 §3.1`): the photo row is preserved so M9's
+    review UI can offer "undo" without resurrecting a face / cluster
+    tree that other rows still reference. Subsequent
+    ``GET /api/photos/{id}/meta`` returns 404 because
+    ``PhotoService.get_photo` ` filters ``status = 'active'``.
+    """
+    if not svc.soft_delete(photo_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"photo {photo_id} not found or already removed",
+        )
+    return Response(status_code=204)
 
 
 __all__ = ["router"]

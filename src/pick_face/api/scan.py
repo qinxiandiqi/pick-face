@@ -150,11 +150,23 @@ async def job_events(
 ) -> Any:
     """Server-Sent Events stream of progress updates.
 
-    Yields one ``event: progress`` per worker tick. The client closes
-    the connection when the job reaches a terminal state.
+    Yields:
+
+    - ``event: progress`` — one per ScanService progress tick (existing).
+    - ``event: new_photo`` — M8-T-8, one per face-bearing image scanned.
+    - ``event: new_person`` — M8-T-8, one per new ``cluster`` row.
+    - ``event: merged`` — M8-T-8, one per cluster merge.
+    - ``event: end`` — job reached a terminal state.
+
+    The ``new_photo`` / ``new_person`` / ``merged`` events are tailed
+    from the ``scan-{id}.events.jsonl`` sidecar that the runner +
+    cluster worker append to. The sidecar is created on
+    ``ScanService.start`` and deleted on terminal transition (so a
+    stale file from a prior failed run doesn't replay).
     """
     import asyncio
     import json
+    from pathlib import Path
 
     from fastapi.responses import StreamingResponse
 
@@ -162,8 +174,11 @@ async def job_events(
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
 
+    sidecar: Path = svc.events_file(job_id)
+
     async def gen():
         last_progress: ScanProgress | None = None
+        last_pos = 0
         while True:
             current = svc.get(job_id)
             if current is None:
@@ -173,7 +188,61 @@ async def job_events(
                 payload = json.dumps(_serialize(current))
                 yield f"event: progress\ndata: {payload}\n\n"
                 last_progress = current.progress
+
+            # M8-T-8: tail the sidecar for incremental events. We
+            # only seek forward so a slow client can disconnect +
+            # reconnect without replaying history. Seek past EOF
+            # reads zero bytes so this is naturally idempotent.
+            try:
+                if sidecar.exists():
+                    data = sidecar.read_bytes()
+                    if len(data) > last_pos:
+                        new = data[last_pos:]
+                        # Decode leniently — a partial final line is
+                        # discarded (the next tick will see it).
+                        for line in new.splitlines():
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                obj = json.loads(line)
+                            except (ValueError, TypeError):
+                                continue
+                            evt_type = obj.get("type") if isinstance(obj, dict) else None
+                            if evt_type in {"new_photo", "new_person", "merged"}:
+                                # Strip the internal ``type`` discriminator;
+                                # the SSE event name carries it instead.
+                                obj.pop("type", None)
+                                yield f"event: {evt_type}\ndata: {json.dumps(obj)}\n\n"
+                        last_pos = len(data)
+            except OSError:
+                # Sidecar may have been deleted on terminal transition.
+                pass
+
             if current.state in (ScanState.DONE, ScanState.FAILED, ScanState.CANCELLED):
+                # Drain any final lines that landed between our last
+                # read and the terminal state — but cap to one tick
+                # so a stuck sidecar doesn't hold the connection.
+                try:
+                    if sidecar.exists():
+                        data = sidecar.read_bytes()
+                        if len(data) > last_pos:
+                            new = data[last_pos:]
+                            for line in new.splitlines():
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                try:
+                                    obj = json.loads(line)
+                                except (ValueError, TypeError):
+                                    continue
+                                evt_type = obj.get("type") if isinstance(obj, dict) else None
+                                if evt_type in {"new_photo", "new_person", "merged"}:
+                                    obj.pop("type", None)
+                                    yield f"event: {evt_type}\ndata: {json.dumps(obj)}\n\n"
+                            last_pos = len(data)
+                except OSError:
+                    pass
                 yield "event: end\ndata: {}\n\n"
                 return
             if await request.is_disconnected():

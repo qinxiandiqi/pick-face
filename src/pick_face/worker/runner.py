@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -42,11 +43,13 @@ class ScanRunner:
         detector: Detector | None = None,
         embedder: Embedder | None = None,
         model_version: str = "yunet-sface/1",
+        on_scan_complete: Callable[[list[int]], None] | None = None,
     ) -> None:
         self._layout = layout
         self._detector = detector
         self._embedder = embedder
         self._model_version = model_version
+        self._on_scan_complete = on_scan_complete
         self._inflight: set[str] = set()
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
@@ -140,6 +143,7 @@ class ScanRunner:
                 decoder=decode,
                 model_version=self._model_version,
                 progress_cb=progress_cb,
+                events_file=svc.events_file(job.id),
             )
             if result.errors > 0:
                 log.info(
@@ -148,6 +152,16 @@ class ScanRunner:
                     result.errors,
                 )
             svc.update_state(job.id, ScanState.DONE)
+            # M8-T-4: notify downstream consumers (cluster_worker)
+            # that new face rows landed. The callback increments the
+            # unclustered counter so the next incremental-check tick
+            # can fire `_run_incremental`.
+            new_face_ids = list(getattr(result, "face_ids", ()) or ())
+            if self._on_scan_complete is not None and new_face_ids:
+                try:
+                    self._on_scan_complete(new_face_ids)
+                except Exception as exc:  # pragma: no cover — defensive
+                    log.warning("scan-runner: on_scan_complete error: %s", exc)
         except (OSError, RuntimeError, ValueError) as exc:
             log.exception("scan %s failed", job.id)
             svc.update_state(job.id, ScanState.FAILED, error=str(exc))

@@ -203,14 +203,21 @@ class PhotoService:
     # -- photo lookup ---------------------------------------------------------
 
     def get_photo(self, photo_id: int) -> PhotoRecord:
-        """Fetch the photo row; raise :class:`PhotoNotFoundError` if missing."""
+        """Fetch the photo row; raise :class:`PhotoNotFoundError` if missing.
+
+        M8 (M8-T-6): photos with ``status='missing'`` (file vanished
+        from disk) and ``status='removed'`` (user soft-delete via
+        ``DELETE /api/photos/{id}``) are surfaced as not-found. The
+        row is still in the table so audit queries can find it; the
+        SPA + Persons API simply exclude it from active listings.
+        """
         conn = open_db(self._layout.db_path)
         try:
             cur = conn.execute(
                 """
                 SELECT id, path, mtime, size, hash
                 FROM source
-                WHERE id = ?
+                WHERE id = ? AND status = 'active'
                 """,
                 (photo_id,),
             )
@@ -420,11 +427,43 @@ class PhotoService:
 
     # -- DB maintenance ------------------------------------------------------
 
+    def soft_delete(self, photo_id: int) -> bool:
+        """Mark a photo as user-removed (`status='removed'`).
+
+        Returns ``True`` when the row was updated, ``False`` when the
+        photo_id is unknown (so the API can return 404). The row is
+        preserved — the user can still find it in a future review UI
+        (M9) to undo, and the face / cluster tables keep referential
+        integrity intact (cluster_id values stay stable).
+        """
+        conn = open_db(self._layout.db_path)
+        try:
+            cur = conn.execute(
+                "UPDATE source SET status = 'removed' WHERE id = ? AND status = 'active'",
+                (photo_id,),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
     def _mark_missing(self, photo_id: int) -> None:
         conn = open_db(self._layout.db_path)
         try:
             conn.execute(
                 "UPDATE source SET status = 'missing' WHERE id = ?",
+                (photo_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _mark_removed(self, photo_id: int) -> None:
+        """Sibling of :meth:`_mark_missing` for user-driven removal."""
+        conn = open_db(self._layout.db_path)
+        try:
+            conn.execute(
+                "UPDATE source SET status = 'removed' WHERE id = ?",
                 (photo_id,),
             )
             conn.commit()

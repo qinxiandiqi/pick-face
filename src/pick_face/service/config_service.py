@@ -181,7 +181,12 @@ models_dir = "cache/models"
 
 [clustering]
 merge_threshold = 0.0                  # 0.0 for SFace 128-D, 0.55 for ArcFace 512-D
-auto_recluster_min_new = 500
+# M8: renamed from `auto_recluster_min_new` to align with the
+# Pydantic schema-of-record (`core/config.py:108 ClusteringConfig.recluster_threshold`).
+# Pydantic's `extra='ignore'` means existing TOMLs that still use the old
+# key keep working (the old value is silently ignored). Rename in your
+# config.toml to force it into effect.
+recluster_threshold = 50
 
 [commercial]
 accept_noncommercial_model_license = false  # AC-9 fail-safe
@@ -230,6 +235,43 @@ def load_config(layout: AppLayout) -> dict[str, object]:
         return {}
     with layout.config_file.open("rb") as f:
         return tomllib.load(f)
+
+
+# M8-T-2 — single-source-of-truth helper so :mod:`polling_scheduler`
+# doesn't have to reach into ``tomllib`` itself. Returns the
+# ``[scan] incremental_interval_sec`` value, or
+# ``DEFAULT_INCREMENTAL_INTERVAL_SEC = 300`` on missing / malformed
+# config. Centralized here so test fixtures and the runtime path
+# stay aligned.
+DEFAULT_INCREMENTAL_INTERVAL_SEC = 300
+
+
+def get_incremental_interval_sec(layout: AppLayout) -> int:
+    """Read ``[scan] incremental_interval_sec``; default 300s.
+
+    Tolerates a missing config (returns the default), an absent
+    ``[scan]`` section (returns the default), and a non-integer
+    value (returns the default). Negative or zero values are also
+    coerced to the default — the scheduler additionally clamps to
+    a minimum of 1s in :class:`PollingScheduler`.
+    """
+    try:
+        cfg = load_config(layout)
+    except (OSError, ValueError):
+        return DEFAULT_INCREMENTAL_INTERVAL_SEC
+    if not isinstance(cfg, dict):
+        return DEFAULT_INCREMENTAL_INTERVAL_SEC
+    scan = cfg.get("scan")
+    if not isinstance(scan, dict):
+        return DEFAULT_INCREMENTAL_INTERVAL_SEC
+    raw = scan.get("incremental_interval_sec")
+    if isinstance(raw, bool):  # bool is a subclass of int — guard explicitly
+        return DEFAULT_INCREMENTAL_INTERVAL_SEC
+    if isinstance(raw, int) and raw > 0:
+        return raw
+    if isinstance(raw, float) and raw.is_integer() and raw > 0:
+        return int(raw)
+    return DEFAULT_INCREMENTAL_INTERVAL_SEC
 
 
 def save_config(layout: AppLayout, data: dict[str, object]) -> None:

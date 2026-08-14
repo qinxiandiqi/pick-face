@@ -10,6 +10,15 @@ runs as an asyncio task reading jobs from an in-process queue.
 Why a JSON registry and not SQLite? M6 scope: a single FastAPI
 process owns all jobs. SQLite-backed cross-process job registry is
 M8 work (`docs/06 §3.1 M8-T-7`).
+
+M8 — sidecar ``scan-{id}.events.jsonl``: each running job gets a
+JSONL sidecar alongside its JSON record. The scan runner appends
+``new_photo`` events, and the cluster worker appends ``new_person``
+/ ``merged`` events (`docs/06 §3.1 M8-T-8`). The SSE generator in
+``api/scan.py`` tails the sidecar from offset 0 and yields events
+to the SPA. The sidecar is created on ``start()`` and deleted on
+terminal state transition so a stale file from a prior failed run
+does not replay into a fresh consumer.
 """
 
 from __future__ import annotations
@@ -186,6 +195,11 @@ class ScanService:
             paths=[str(p) for p in paths],
         )
         self._write(job)
+        # M8-T-8: create the empty events sidecar so the SSE generator
+        # can start tailing from offset 0 even before any event lands.
+        # `missing_ok=True` so two consecutive starts (or a restart)
+        # don't error.
+        self.events_file(job.id).touch(exist_ok=True)
         return job
 
     def update_state(self, job_id: str, state: ScanState, error: str | None = None) -> bool:
@@ -201,6 +215,15 @@ class ScanService:
         if error:
             job.error = error
         self._write(job)
+        # M8-T-8: tear down the events sidecar when the job hits a
+        # terminal state. The SSE generator polls every 0.5s and emits
+        # `end` on its own when it sees the terminal state; we delete
+        # the sidecar *after* the JSON write so a concurrent tail
+        # that already observed the terminal state still has the file
+        # to drain. SSE consumers tolerate FileNotFoundError as a
+        # graceful end-of-stream signal.
+        if state in (ScanState.DONE, ScanState.FAILED, ScanState.CANCELLED):
+            self.events_file(job_id).unlink(missing_ok=True)
         return True
 
     def update_progress(self, job_id: str, progress: ScanProgress) -> bool:
@@ -221,6 +244,19 @@ class ScanService:
 
     def _job_file(self, job_id: str) -> Path:
         return self._layout.jobs_dir / f"scan-{job_id}.json"
+
+    def events_file(self, job_id: str) -> Path:
+        """Path of the JSONL sidecar that the scan runner + cluster
+        worker append to during a running job (`docs/06 §3.1 M8-T-8`).
+
+        The sidecar lives next to ``scan-{id}.json`` so a stale file
+        from a prior crashed run lives in the same dir and is easy to
+        detect. The SSE generator in ``api/scan.py`` tails this file
+        from offset 0 with poll cadence 0.5s.
+
+        Created on ``start()``; deleted on terminal state transition.
+        """
+        return self._layout.jobs_dir / f"scan-{job_id}.events.jsonl"
 
     def _iter_job_files(self) -> Iterable[Path]:
         if not self._layout.jobs_dir.exists():

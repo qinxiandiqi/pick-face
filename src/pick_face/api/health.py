@@ -17,7 +17,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from pick_face.api.deps import get_layout
 from pick_face.core.config import load_config
@@ -71,8 +71,16 @@ def _resolve_active_pack(layout: AppLayout) -> dict[str, Any] | None:
 
 
 @router.get("/ready")
-def ready(layout: AppLayout = Depends(get_layout)) -> dict[str, Any]:
-    """Readiness probe — checks DB connectivity + config presence."""
+def ready(request: Request, layout: AppLayout = Depends(get_layout)) -> dict[str, Any]:
+    """Readiness probe — checks DB connectivity + config presence.
+
+    M8-T-7 — additionally reports background-service liveness so the
+    SPA `useReadyQuery` can show a "watcher offline" badge without
+    having to subscribe to ``/api/scan/jobs/active``.
+
+    Each status defaults to ``"disabled"`` when the component is
+    absent (test mode, or init-state before lifespan finished).
+    """
     db_ok = False
     db_error: str | None = None
     try:
@@ -89,7 +97,30 @@ def ready(layout: AppLayout = Depends(get_layout)) -> dict[str, Any]:
     cache_ok = layout.cache_dir.is_dir()
     jobs_ok = layout.jobs_dir.is_dir()
 
-    overall = db_ok and config_ok and cache_ok and jobs_ok
+    # M8-T-7 — background-service status. ``getattr`` with sentinel
+    # lets tests construct the app without every component (the
+    # lifespan stub fixture skips cluster_worker when no model is
+    # loaded).
+    file_watcher = getattr(request.app.state, "file_watcher", None)
+    polling_scheduler = getattr(request.app.state, "polling_scheduler", None)
+    cluster_worker = getattr(request.app.state, "cluster_worker", None)
+
+    watcher_status = file_watcher.status() if file_watcher is not None else "disabled"
+    polling_status = polling_scheduler.status() if polling_scheduler is not None else "disabled"
+    cluster_status = cluster_worker.status() if cluster_worker is not None else "disabled"
+
+    queue_depth = {
+        "file_watcher": file_watcher.qsize() if file_watcher is not None else 0,
+        "polling": polling_scheduler.qsize() if polling_scheduler is not None else 0,
+        "recluster": cluster_worker.qsize() if cluster_worker is not None else 0,
+    }
+
+    # Treat a *crashed* watcher as a degraded readiness signal but
+    # don't fail the whole probe (an admin can still query the
+    # REST surface over HTTP). Only flag explicit `inactive` (the
+    # watcher thread exited cleanly); `disabled` is benign.
+    watcher_health_ok = watcher_status not in ("inactive", "failed")
+    overall = db_ok and config_ok and cache_ok and jobs_ok and watcher_health_ok
     return {
         "status": "ready" if overall else "degraded",
         "layout": {
@@ -103,6 +134,10 @@ def ready(layout: AppLayout = Depends(get_layout)) -> dict[str, Any]:
             "config": {"ok": config_ok},
             "cache_dir": {"ok": cache_ok},
             "jobs_dir": {"ok": jobs_ok},
+            "queue_depth": queue_depth,
+            "watcher_status": watcher_status,
+            "polling_status": polling_status,
+            "cluster_worker_status": cluster_status,
         },
         "active_pack": _resolve_active_pack(layout),
     }

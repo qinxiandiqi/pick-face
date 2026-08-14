@@ -20,6 +20,7 @@ and persists progress via ``ScanService.update_progress``.
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -85,6 +86,16 @@ class ScanResult:
     faces: int = 0
     errors: int = 0
     rows: list[tuple[ScanRow, list[FaceRecord]]] = field(default_factory=list)
+    # M8-T-4 / M8-T-8: per-face row IDs returned to the runner so it
+    # can notify the cluster worker + append ``new_photo`` events to
+    # the scan's events sidecar. Empty for runs that processed zero
+    # faces.
+    face_ids: list[int] = field(default_factory=list)
+    # M8-T-6: paths the scanner detected as ``DiffKind.DEL`` and the
+    # worker marked ``status='missing'`` in SQLite. Callers (the
+    # runner, integration tests) use this to verify soft-delete
+    # bookkeeping without re-running the diff.
+    soft_deleted_paths: list[str] = field(default_factory=list)
 
 
 class ImageDecoder(Protocol):
@@ -107,6 +118,8 @@ async def run_scan(
     model_version: str,
     db_rows: dict[str, tuple[int, float, str]] | None = None,
     progress_cb=None,
+    job_id: str | None = None,
+    events_file: Path | None = None,
 ) -> ScanResult:
     """Execute one scan pass over ``scan_paths`` and persist faces.
 
@@ -119,11 +132,26 @@ async def run_scan(
         model_version: stored on each face row for HNSW rebuild filtering.
         db_rows: optional pre-existing (size, mtime, hash) map for diff.
         progress_cb: optional async callable(processed, total, faces, errors).
+        job_id: M8-T-8 — when set, ``new_photo`` events are appended to
+            ``events_file`` (one JSON line per scanned photo that
+            yielded ≥ 1 face).
+        events_file: M8-T-8 — path to the JSONL sidecar; when ``None``
+            the scan runs without emitting events (CLI mode).
 
     Returns:
-        :class:`ScanResult` with totals + per-row face records.
+        :class:`ScanResult` with totals + per-row face records +
+        ``face_ids`` + ``soft_deleted_paths``.
     """
     loop = asyncio.get_running_loop()
+    # M8-T-6: pre-load ``db_rows`` from the ``source`` table when the
+    # caller doesn't supply one. Without this, the scanner has no
+    # baseline against which to compute ``DiffKind.DEL`` — files
+    # that vanished from disk since the last scan would never be
+    # detected as missing. Production callers (the runner) pass
+    # ``db_rows=None``; integration tests sometimes pass an explicit
+    # map to keep the fixture deterministic.
+    if db_rows is None:
+        db_rows = await loop.run_in_executor(None, _load_db_rows, db_path)
     rows, stats = await loop.run_in_executor(
         None,
         lambda: scan(scan_paths, db_rows=db_rows),
@@ -131,9 +159,11 @@ async def run_scan(
     # Only ADD/MOD need detector work. UNCHANGED+DEL are bookkeeping.
     actionable = [r for r in rows if r.kind in (DiffKind.ADD, DiffKind.MOD)]
     total = len(actionable)
+    del_rows = [r for r in rows if r.kind == DiffKind.DEL]
+    soft_deleted_paths = [str(r.abs_path) for r in del_rows]
     result = ScanResult(total=total, processed=0, faces=0, errors=stats.errors)
 
-    if total == 0:
+    if total == 0 and not del_rows:
         if progress_cb is not None:
             await progress_cb(0, 0, 0, stats.errors)
         return result
@@ -162,6 +192,16 @@ async def run_scan(
                     row.mtime,
                 ),
             )
+        # M8-T-6: DEL pass — files that vanished from disk since the
+        # last scan get status='missing' so the Persons API excludes
+        # their faces and the SPA waterfall doesn't show ghost
+        # thumbnails.
+        if del_rows:
+            for row in del_rows:
+                conn.execute(
+                    "UPDATE source SET status = 'missing' WHERE path = ?",
+                    (str(row.abs_path),),
+                )
         conn.commit()
     finally:
         conn.close()
@@ -172,7 +212,7 @@ async def run_scan(
     # cross-thread connection use.
     for _idx, row in enumerate(actionable, start=1):
         try:
-            faces = await loop.run_in_executor(
+            faces, face_ids = await loop.run_in_executor(
                 None,
                 _process_one,
                 row,
@@ -186,13 +226,45 @@ async def run_scan(
             result.faces += len(faces)
             if faces:
                 result.rows.append((row, faces))
+                result.face_ids.extend(face_ids)
+                # M8-T-8: sidecar append for `new_photo` events. We
+                # reuse the source_id we already resolved inside
+                # ``_process_one`` instead of re-querying the DB.
+                if events_file is not None:
+                    _append_new_photo_event(
+                        events_file,
+                        source_id=int(faces[0].source_id),
+                        face_count=len(faces),
+                    )
         except (OSError, RuntimeError, ValueError):
             # Per docs/01 §1.2 AC-2: a single bad file must not stop
             # the scan; we record the error and move on.
             result.errors += 1
         if progress_cb is not None:
             await progress_cb(result.processed, total, result.faces, result.errors)
+    result.soft_deleted_paths = soft_deleted_paths
     return result
+
+
+def _append_new_photo_event(events_file: Path, *, source_id: int, face_count: int) -> None:
+    """Best-effort append of a ``new_photo`` line to the sidecar.
+
+    Silently drops on OS errors — the sidecar is a UX hint, not a
+    durability-critical ledger. The face rows are already persisted
+    in SQLite by the time we get here.
+    """
+    if not source_id or face_count <= 0:
+        return
+    try:
+        with events_file.open("a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {"type": "new_photo", "photo_id": int(source_id), "face_count": int(face_count)}
+                )
+                + "\n"
+            )
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -207,11 +279,15 @@ def _process_one(
     decoder: ImageDecoder,
     model_version: str,
     db_path: Path,
-) -> list[FaceRecord]:
+) -> tuple[list[FaceRecord], list[int]]:
     """Synchronous per-image work; runs in the default executor.
 
     Opens its own sqlite3 connection because sqlite3 connections are
     thread-local and the executor may run on any thread.
+
+    Returns ``(faces, face_ids)`` where ``face_ids[i]`` is the SQLite
+    rowid of the inserted face matching ``faces[i]``. Both lists are
+    empty when no faces were detected.
     """
     decoded = decoder(row.abs_path)
     bgr = getattr(decoded, "bgr", None)
@@ -268,8 +344,9 @@ def _process_one(
                     source_id=source_id,
                 )
             )
+        face_ids: list[int] = []
         for face in out:
-            conn.execute(
+            cur = conn.execute(
                 """
                 INSERT INTO face (
                     source_id, bbox_x1, bbox_y1, bbox_x2, bbox_y2, det_score,
@@ -300,10 +377,11 @@ def _process_one(
                     face.model_version,
                 ),
             )
+            face_ids.append(int(cur.lastrowid))
         conn.commit()
     finally:
         conn.close()
-    return out
+    return out, face_ids
 
 
 def ensure_schema(db_path: Path) -> None:
@@ -332,6 +410,26 @@ def _now() -> float:
     import time
 
     return time.time()
+
+
+def _load_db_rows(db_path: Path) -> dict[str, tuple[int, float, str]]:
+    """Read all known ``source`` rows into the (size, mtime, hash) shape
+    that :func:`ingest.scanner.scan` expects.
+
+    Hash column may be empty for v2.x inserts that pre-date the
+    xxh3 hash column — we substitute an empty string so the scanner
+    still emits a sane diff (it uses hash only as a tie-breaker when
+    size+mtime collide).
+    """
+    conn = open_db(db_path)
+    try:
+        cur = conn.execute("SELECT path, size, mtime, hash FROM source")
+        out: dict[str, tuple[int, float, str]] = {}
+        for path, size, mtime, h in cur.fetchall():
+            out[str(path)] = (int(size), float(mtime), str(h or ""))
+        return out
+    finally:
+        conn.close()
 
 
 __all__ = [
