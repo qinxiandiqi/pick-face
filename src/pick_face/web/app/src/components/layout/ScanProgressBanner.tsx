@@ -12,6 +12,7 @@ import { Loader2, X } from "lucide-react";
 
 import {
   useActiveScanJobQuery,
+  usePersonsLiveInvalidator,
   useStartScanMutation,
 } from "@/lib/api/hooks";
 import { openScanEventStream } from "@/lib/sse";
@@ -22,6 +23,23 @@ import { Progress } from "@/components/ui/progress";
 export function ScanProgressBanner(): React.JSX.Element | null {
   const { data: job } = useActiveScanJobQuery({ refetchInterval: 2_000 });
   const startScan = useStartScanMutation();
+
+  // M8-T-8 — when a scan is running, refetch the persons grid on each
+  // new_photo / new_person / merged event. The hook auto-cleans up
+  // when the job terminates.
+  usePersonsLiveInvalidator(job?.id, {
+    onNewPhoto: () => {
+      // Throttled toast: fire at most once per 1.5s so a 50-photo
+      // burst doesn't spam the UI.
+      flashNewPhotoToast();
+    },
+    onNewPerson: () => {
+      toast.success("New person detected");
+    },
+    onMerged: () => {
+      // Silent — merged clusters are an internal bookkeeping event.
+    },
+  });
 
   // Local mirror of the progress payload so we can render without
   // hammering the API while SSE is open.
@@ -111,4 +129,14 @@ export function ScanProgressBanner(): React.JSX.Element | null {
       )}
     </div>
   );
+}
+
+// ---- toast throttle -------------------------------------------------------
+
+let lastNewPhotoToastAt = 0;
+function flashNewPhotoToast(): void {
+  const now = Date.now();
+  if (now - lastNewPhotoToastAt < 1_500) return;
+  lastNewPhotoToastAt = now;
+  toast.success("New photo indexed");
 }

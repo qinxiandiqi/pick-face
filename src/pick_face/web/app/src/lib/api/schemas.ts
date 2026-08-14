@@ -139,6 +139,33 @@ export const ScanProgressEventSchema = z.object({
 });
 export type ScanProgressEvent = z.infer<typeof ScanProgressEventSchema>;
 
+// ----------------------------------------------------------------------------
+// M8-T-8 — incremental ingestion events (appended to the scan-{id}.events.jsonl
+// sidecar; the SSE generator emits them as `event: new_photo` / `new_person` /
+// `merged`). The cluster worker doesn't know the active job id when it emits,
+// so a "no_job" guard is implemented in the SSE generator (events without a
+// matching job are dropped silently).
+// ----------------------------------------------------------------------------
+
+export const ScanNewPhotoEventSchema = z.object({
+  photo_id: z.number().int().positive(),
+  face_count: z.number().int().nonnegative(),
+});
+export type ScanNewPhotoEvent = z.infer<typeof ScanNewPhotoEventSchema>;
+
+export const ScanNewPersonEventSchema = z.object({
+  cluster_id: z.number().int().positive(),
+  label: z.string(),
+});
+export type ScanNewPersonEvent = z.infer<typeof ScanNewPersonEventSchema>;
+
+export const ScanMergedEventSchema = z.object({
+  cluster_id: z.number().int().positive(),
+  into_cluster_id: z.number().int().positive(),
+  face_count: z.number().int().nonnegative(),
+});
+export type ScanMergedEvent = z.infer<typeof ScanMergedEventSchema>;
+
 // ============================================================================
 // Persons (virtual albums)
 // ============================================================================
