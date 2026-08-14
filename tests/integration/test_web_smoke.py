@@ -296,6 +296,152 @@ def test_photo_404_when_path_under_no_whitelist(
     assert r.status_code == 403
 
 
+def test_file_watcher_creates_job_on_real_filesystem_write(
+    client, tmp_pure: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M8-T-1: a file write to a whitelisted dir eventually enqueues a scan.
+
+    We bypass the watchdog observation queue by calling
+    ``FileWatcher._emit_job`` directly (the same code path watchdog
+    events go through after debounce). The test asserts the scan
+    service receives a job with ``kind='path_only'`` for the file
+    we just wrote.
+    """
+    from PIL import Image
+
+    photos = tmp_pure / "photos"
+    photos.mkdir()
+    r = client.post("/api/config/paths", json={"path": str(photos)})
+    assert r.status_code == 201
+
+    new_file = photos / "fresh.jpg"
+    Image.new("RGB", (40, 40), (10, 20, 30)).save(new_file)
+
+    from pick_face.service.file_watcher import FileWatcher
+    from pick_face.service.scan_service import ScanJob, ScanState
+
+    captured: list[dict] = []
+
+    def fake_start(self, *, paths=None, kind="incremental"):
+        captured.append({"paths": list(paths) if paths else None, "kind": kind})
+        return ScanJob(
+            id=f"watch-{len(captured)}",
+            state=ScanState.QUEUED,
+            kind=kind,
+            paths=[str(p) for p in paths] if paths else [],
+        )
+
+    monkeypatch.setattr(
+        "pick_face.service.scan_service.ScanService.start", fake_start
+    )
+
+    layout = client.app.state.layout
+    # Use a no-op loop — we won't call start(); we drive _emit_job
+    # directly which doesn't require a running observer.
+    import asyncio
+
+    loop = asyncio.new_event_loop()
+    fw = FileWatcher(layout, loop=loop, debounce_sec=0.05)
+    try:
+        fw._emit_job(new_file)  # noqa: SLF001
+        assert len(captured) == 1, captured
+        assert captured[0]["kind"] == "path_only"
+        assert any(str(new_file) == str(p) for p in (captured[0]["paths"] or []))
+    finally:
+        loop.close()
+
+
+def test_polling_creates_periodic_jobs(
+    client, tmp_pure: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M8-T-2: a polling tick enqueues a ``path_only`` scan job.
+
+    Override ``incremental_interval_sec=1`` (via config) and let the
+    PollingScheduler tick at least twice within 2.5s. Each tick
+    enqueues a ``path_only`` job through ``ScanService.start``.
+    """
+    layout = _layout(tmp_pure)
+    # Write a config with a 1s polling interval so the suite finishes
+    # within the CI budget.
+    cfg = layout.config_file
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text("[scan]\nincremental_interval_sec = 1\n", encoding="utf-8")
+
+    from pick_face.service.scan_service import ScanJob, ScanState
+    from pick_face.service.polling_scheduler import PollingScheduler
+
+    captured: list[dict] = []
+
+    def fake_start(self, *, paths=None, kind="incremental"):
+        captured.append({"paths": list(paths) if paths else None, "kind": kind})
+        return ScanJob(
+            id=f"poll-{len(captured)}",
+            state=ScanState.QUEUED,
+            kind=kind,
+            paths=[str(p) for p in paths] if paths else [],
+        )
+
+    monkeypatch.setattr(
+        "pick_face.service.scan_service.ScanService.start", fake_start
+    )
+
+    async def go() -> None:
+        sched = PollingScheduler(layout, interval_sec=1)
+        sched.start()
+        # Resume the APScheduler job — see test_polling_scheduler for
+        # why production leaves it paused.
+        sched._scheduler.resume_job("polling-scheduler-tick")  # noqa: SLF001
+        try:
+            await asyncio.sleep(2.5)
+        finally:
+            await sched.stop()
+
+    asyncio.run(go())
+    path_only = [c for c in captured if c["kind"] == "path_only"]
+    assert len(path_only) >= 2, f"expected ≥ 2 polls, got {captured}"
+
+
+def test_photo_delete_then_list_excludes(
+    client, tmp_pure: Path
+) -> None:
+    """M8-T-6: after DELETE /api/photos/{id}, the meta route returns 404.
+
+    End-to-end version of the unit test in
+    ``tests/unit/test_soft_delete.py`` — exercises the HTTP path
+    rather than the DB layer.
+    """
+    layout = client.app.state.layout
+    img = tmp_pure / "del_smoke.jpg"
+    img.write_bytes(b"\xff\xd8\xff\xe0stub")
+
+    from pick_face.store.index import open_db
+
+    conn = open_db(layout.db_path)
+    cur = conn.execute(
+        "INSERT INTO source(path, rel_path, size, mtime, hash_algo, hash, status, first_seen, last_seen) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            str(img),
+            "del_smoke.jpg",
+            img.stat().st_size,
+            1.0,
+            "xxh3_64",
+            "h",
+            "active",
+            1.0,
+            1.0,
+        ),
+    )
+    conn.commit()
+    photo_id = int(cur.lastrowid)
+    conn.close()
+
+    r = client.delete(f"/api/photos/{photo_id}")
+    assert r.status_code == 204
+    r = client.get(f"/api/photos/{photo_id}/meta")
+    assert r.status_code == 404
+
+
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",

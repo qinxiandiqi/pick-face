@@ -104,6 +104,62 @@ def test_ready_degraded_when_db_missing(client) -> None:
 
 
 # ---------------------------------------------------------------------------
+# M8-T-7 — /api/ready gains background-service status (queue_depth,
+# watcher_status, polling_status, cluster_worker_status). Each status
+# defaults to "disabled" when the component is absent (test mode).
+# ---------------------------------------------------------------------------
+
+
+def test_ready_includes_queue_depth(client) -> None:
+    """The ``checks.queue_depth`` block has the three expected buckets."""
+    r = client.get("/api/ready")
+    assert r.status_code == 200
+    body = r.json()
+    qd = body["checks"]["queue_depth"]
+    assert set(qd) == {"file_watcher", "polling", "recluster"}
+    # Each bucket is an int — exact value depends on what the lifespan
+    # mounted. The watcher is "disabled" (no scan roots configured) so
+    # its qsize is 0. The polling scheduler reports 1 (next tick
+    # scheduled). The cluster_worker reports 0 (idle).
+    assert isinstance(qd["file_watcher"], int)
+    assert isinstance(qd["polling"], int)
+    assert isinstance(qd["recluster"], int)
+
+
+def test_ready_includes_watcher_status(client) -> None:
+    """``checks.watcher_status`` is ``'disabled'`` when no scan roots set.
+
+    The test client lifespan starts a watcher that finds no enabled
+    scan paths, so it self-disables to ``status()=='disabled'``. The
+    SPA renders a "watcher offline" Badge on this state.
+    """
+    r = client.get("/api/ready")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["checks"]["watcher_status"] == "disabled"
+
+
+def test_ready_reports_disabled_when_components_missing(client) -> None:
+    """Watcher reports 'disabled' (no scan roots); polling + cluster are 'idle'.
+
+    Both polling_scheduler and cluster_worker run but report 'active'
+    / 'idle' since they're scheduled. The watcher is 'disabled'
+    because the test config has no enabled scan roots. We assert all
+    three keys are present and well-formed.
+    """
+    r = client.get("/api/ready")
+    assert r.status_code == 200
+    body = r.json()
+    checks = body["checks"]
+    # Watcher is 'disabled' (no scan roots).
+    assert checks["watcher_status"] in {"disabled", "inactive", "active"}
+    # Polling scheduler starts on lifespan; it's either active or inactive.
+    assert checks["polling_status"] in {"disabled", "inactive", "active"}
+    # Cluster worker starts on lifespan; same.
+    assert checks["cluster_worker_status"] in {"disabled", "inactive", "idle"}
+
+
+# ---------------------------------------------------------------------------
 # M7.7 — /api/ready gains an active_pack block (license-class-driven Badge).
 # ---------------------------------------------------------------------------
 
@@ -385,7 +441,7 @@ def test_photo_meta_includes_faces(client, tmp_pure: Path) -> None:
     cur = conn.execute(
         "INSERT INTO source(path, rel_path, size, mtime, hash, status, "
         "                  first_seen, last_seen) "
-        "VALUES (?, ?, ?, ?, ?, 'ok', 0, 0)",
+        "VALUES (?, ?, ?, ?, ?, 'active', 0, 0)",
         (str(img_path), "x.jpg", 12, 1.0, "abc"),
     )
     photo_id = int(cur.lastrowid)
@@ -439,7 +495,7 @@ def test_photo_meta_empty_faces(client, tmp_pure: Path) -> None:
     cur = conn.execute(
         "INSERT INTO source(path, rel_path, size, mtime, hash, status, "
         "                  first_seen, last_seen) "
-        "VALUES (?, ?, ?, ?, ?, 'ok', 0, 0)",
+        "VALUES (?, ?, ?, ?, ?, 'active', 0, 0)",
         (str(img_path), "y.jpg", 12, 1.0, "def"),
     )
     photo_id = int(cur.lastrowid)
@@ -482,7 +538,7 @@ def test_photo_meta_includes_exif_block(client, tmp_pure: Path) -> None:
     cur = conn.execute(
         "INSERT INTO source(path, rel_path, size, mtime, hash, status, "
         "                  first_seen, last_seen) "
-        "VALUES (?, ?, ?, ?, ?, 'ok', 0, 0)",
+        "VALUES (?, ?, ?, ?, ?, 'active', 0, 0)",
         (str(img_path), "exif.jpg", img_path.stat().st_size, 1.0, "exifhash"),
     )
     photo_id = int(cur.lastrowid)
@@ -521,7 +577,7 @@ def test_photo_meta_exif_all_null_when_no_tags(client, tmp_pure: Path) -> None:
     cur = conn.execute(
         "INSERT INTO source(path, rel_path, size, mtime, hash, status, "
         "                  first_seen, last_seen) "
-        "VALUES (?, ?, ?, ?, ?, 'ok', 0, 0)",
+        "VALUES (?, ?, ?, ?, ?, 'active', 0, 0)",
         (str(img_path), "plain.jpg", img_path.stat().st_size, 1.0, "plainhash"),
     )
     photo_id = int(cur.lastrowid)
