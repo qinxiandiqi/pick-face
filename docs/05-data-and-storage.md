@@ -208,6 +208,41 @@ CREATE INDEX idx_pp_person ON photo_persons(person_id);
 CREATE INDEX idx_pp_photo ON photo_persons(photo_id);
 ```
 
+### 2.1 v2.x 兼容层 — `source` 与 `face` 表（M8 增补）
+
+> **注意**：M6/M7/M8 复用 v2.x 的 `source` / `face` 表（详见
+> `src/pick_face/store/index.py:44`），不是上面的 `photos` / `faces`
+> 范式。迁移到范式化 `photos` 表是 v4 的工作。
+
+```sql
+-- v2.x 表（pick-face 实际使用）
+CREATE TABLE source (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    path        TEXT NOT NULL UNIQUE,
+    rel_path    TEXT,
+    size        INTEGER NOT NULL,
+    mtime       REAL NOT NULL,
+    hash_algo   TEXT,
+    hash        TEXT,
+    status      TEXT NOT NULL,                  -- M8: 'active' | 'missing' | 'removed'
+    first_seen  REAL NOT NULL,
+    last_seen   REAL NOT NULL
+);
+CREATE INDEX idx_source_status ON source(status);
+```
+
+**M8 软删除语义** — `source.status` 枚举扩展：
+
+| 值 | 含义 | 设置者 |
+|---|---|---|
+| `active` | 图存在且未被用户删除（默认） | `INSERT OR IGNORE`（扫描） |
+| `missing` | 上次扫描后文件从磁盘消失 | `scan_worker.run_scan` DEL pass |
+| `removed` | 用户通过 `DELETE /api/photos/{id}` 删除 | `PhotoService.soft_delete` |
+
+`status` 列是 `TEXT NOT NULL`，**没有 CHECK 约束**。新增枚举值不需要 schema 迁移（v3 没有迁移框架）。`PersonService` 所有查询都加 `JOIN source s ON ... AND s.status='active'`，软删除的图片自动从 face_count / photo_count / cover / photos 列表中剔除。
+
+`_VALID_SOURCE_STATUSES = frozenset({"active", "missing", "removed"})` 在 `src/pick_face/store/index.py` 中定义，写入点（`_mark_missing` / `_mark_removed` / scan worker DEL pass）需保证值在集合内。
+
 ## 3. HNSW 索引
 
 ```python

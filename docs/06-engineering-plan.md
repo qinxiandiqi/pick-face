@@ -73,7 +73,7 @@ v2.x（M0–M5）已经把"CLI 工具 + 算法内核 + Model Pack 架构"做完�
 | M7-T-9 | PWA manifest + service worker ✅ M7.9（vite-plugin-pwa 0.21.2；workbox generateSW；app shell + `/api/photos/{id}/thumb` CacheFirst 30d + `/api/persons{,/{id}/photos}` SWR 1h；`RangeRequestsPlugin` 默认处理原图；`Settings → App` 手动 install 按钮 + 受控 update toast；`registerSW.js` + `sw.js` + `manifest.webmanifest` + 3 个 PNG icons；`AC-W10` ✅） | M7-T-1 |
 | M7-T-10 | 浏览器 E2E 测试（Playwright）⏸️ M7.5 | M7-T-1 |
 | M7-T-11 | `Toast` (sonner) 错误反馈统一封装 ✅ M7.7（`lib/toast.ts` 门面 + `toast.fromError` 收口） | M6-T-11b |
-| M7-T-12 | 全局 `Command` (cmdk) 搜索（按人名 / 路径 / EXIF）⏸️ M7.5 | M6-T-11b |
+| M7-T-12 | ~~全局 `Command` (cmdk) 搜索~~ ❌ 已取消（2026-08-13：未发现足够有意义的目标列表；persons 数 ≤ 50 + 4 个 settings tab + 静态 actions，搜索的价值不抵 keybind 复杂度成本） | M6-T-11b |
 | M7-T-13 | `Badge` 标注 NC-research 模型包警告 ✅ M7.8（`/api/ready.active_pack` + `<ModelPackCard>` 三态 Badge + 未确认警告 toast） | M6-T-11b |
 
 ### 2.2 验收
@@ -88,20 +88,42 @@ v2.x（M0–M5）已经把"CLI 工具 + 算法内核 + Model Pack 架构"做完�
 
 ### 3.1 子任务
 
-| 任务 ID | 内容 | 依赖 |
-|---|---|---|
-| M8-T-1 | `service/file_watcher.py` watchdog → asyncio.Queue | M6-T-5 |
-| M8-T-2 | APScheduler 周期轮询兜底（每 5 分钟） | M8-T-1 |
-| M8-T-3 | `worker/cluster_worker.py` 周期重聚类 | M6-T-10 |
-| M8-T-4 | `worker/cluster_worker.py` 增量触发（≥ N 张脸） | M8-T-3 |
-| M8-T-5 | HNSW 增量添加 + 持久化频率 | M6-T-7 |
-| M8-T-6 | 软删除（`photos.deleted = 1`）| M6-T-7 |
-| M8-T-7 | `api/health` 队列深度 + worker 状态 | M6-T-1 |
-| M8-T-8 | SSE 增量事件（new_photo / new_person / merged） | M7-T-1 |
+| 任务 ID | 内容 | 依赖 | 状态 |
+|---|---|---|---|
+| M8-T-1 | `service/file_watcher.py` watchdog → asyncio.Queue | M6-T-5 | ✅ |
+| M8-T-2 | APScheduler 周期轮询兜底（每 5 分钟） | M8-T-1 | ✅ |
+| M8-T-3 | `worker/cluster_worker.py` 周期重聚类 | M6-T-10 | ✅ |
+| M8-T-4 | `worker/cluster_worker.py` 增量触发（≥ N 张脸） | M8-T-3 | ✅ |
+| M8-T-5 | HNSW 增量添加 + 持久化频率 | M6-T-7 | ✅ |
+| M8-T-6 | 软删除（`source.status='removed'/'missing'`）| M6-T-7 | ✅ |
+| M8-T-7 | `api/ready` 队列深度 + worker 状态 | M6-T-1 | ✅ |
+| M8-T-8 | SSE 增量事件（new_photo / new_person / merged） | M7-T-1 | ✅ |
 
 ### 3.2 验收
 
 - AC-W8：新增一张图，30 秒内出现在聚类结果 ✅
+- AC-W8-SSE：watchdog 触发后，`/api/scan/jobs/{id}/events` 流至少发出一个 `new_photo` 事件 ✅
+- AC-W8-DELETE：`DELETE /api/photos/{id}` 返回 204；之后该图对应的脸从 `/api/persons` 中消失 ✅
+
+### 3.3 实现要点
+
+- 触发面（**用户锁定决策**）：复用 `ScanService.start(paths=[...], kind="path_only")`，**不**写新的 embedder pipeline。`run_scan` 通过 `(size, mtime)` diff 自然处理 ADD/MOD/UNCHANGED/DEL。
+- 双源单汇：watchdog + APScheduler 周期轮询 → 单一消费者 → `ScanService.start`。5 秒 debounce 窗口将 50 个文件的 burst 合并为 1 个 job。
+- HNSW 持久化：每次增量聚类后 `add_items + save`；启动时 `load()` → 失败时 `rebuild()`。HNSW 是单任务拥有（cluster worker），避免 hnswlib 的线程安全问题。
+- 软删除：**没有 schema migration**。`source.status` 扩展枚举值 `'removed'`（用户驱动）+ 复用已有的 `'missing'`（filesystem 驱动）。`status TEXT NOT NULL` 无 CHECK 约束，所以新值自动生效。
+- SSE 通道：复用 `/api/scan/jobs/{id}/events`，通过 `scan-{id}.events.jsonl` sidecar 转发 `new_photo` / `new_person` / `merged` 事件。SSE generator 0.5 秒 poll tail。SPA 的 `usePersonsLiveInvalidator` 在事件触发时 invalidate `persons` query。
+- `recluster_threshold` 重命名：原 `auto_recluster_min_new` → `recluster_threshold`（对齐 `core/config.py ClusteringConfig` schema-of-record，默认值 50）。Pydantic `extra='ignore'` 保证旧 TOML 文件兼容（旧值被静默忽略，使用默认值）。
+
+### 3.4 失败模式
+
+| 失败 | 缓解 | 备注 |
+|---|---|---|
+| watchdog 在 Docker bind mount / NFS 上不触发 | M8-T-2 周期轮询兜底（每 5 分钟） | 单一 source-of-truth |
+| APScheduler 与 watchdog 同时触发 | `run_scan` diff 幂等；最坏情况：一次冗余 DB read | 接受 |
+| HNSW 写崩溃 | `save()` 是 write-then-rename 原子写；崩溃后 `load()` 仍可读到上次的好文件 | `index_hnsw.py:238` |
+| 维度漂移（active pack 切换） | `load()` 抛 `ValueError` → `rebuild()` 从 SQLite 重建 | 慢但安全 |
+| 旧 config.toml 仍用 `auto_recluster_min_new` | Pydantic `extra='ignore'` 静默忽略，使用默认值 50 | 文档提示用户改名 |
+| `source.status='removed'` 写错值（无 DB CHECK） | `store/index.py _VALID_SOURCE_STATUSES` 常量 + 写点 assert | 类型层防御 |
 
 ## 4. M9 — 多目录聚合 + Review UI
 

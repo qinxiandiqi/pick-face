@@ -632,6 +632,50 @@ paths verified gitignored via `git check-ignore -v`).
 
 ---
 
+### M8 — Incremental scan + watchdog + periodic recluster + soft-delete + SSE events
+
+#### What's new
+
+- **Incremental ingestion, two paths to one consumer.** `service/file_watcher.py` (watchdog → `asyncio.Queue[Path]` → `ScanService.start(paths=[p], kind="path_only")`) covers local filesystems; `service/polling_scheduler.py` (APScheduler `IntervalTrigger(seconds=incremental_interval_sec)`) covers Docker bind mounts / NFS / FUSE where watchdog is unreliable. 5-second debounce collapses a 50-file burst into one job. Both paths reuse the existing `run_scan` worker (no new embedder pipeline, per the locked decision in `docs/06 §3.3`).
+- **Cluster worker** (`worker/cluster_worker.py`) — two triggers: `recluster_interval_hours` for full HDBSCAN re-cluster, and a `recluster_threshold` (default 50) counter for incremental `incremental_assign` (the M2 helper that had never been wired). Registers on `ScanRunner._on_scan_complete` so every DONE scan feeds the unclustered counter.
+- **HNSW persistence** (`HnswIndex.add_items + save` after every cluster run; `load()` on startup with `rebuild()` fallback on `ValueError`). Single-task ownership avoids hnswlib's thread-safety caveats.
+- **Soft-delete without a schema migration.** `source.status` enum extended with `'removed'` (user-driven, via `DELETE /api/photos/{id}`) and the existing `'missing'` (filesystem-driven, via the new scan-worker DEL pass). No DB-level CHECK constraint; the constant `_VALID_SOURCE_STATUSES` lives in `store/index.py` and is asserted at write sites. `PersonService` joins `source s ON ... AND s.status='active'` on every face JOIN so the SPA waterfall never surfaces ghost thumbnails.
+- **`/api/ready` extended** with `checks.queue_depth`, `checks.watcher_status`, `checks.polling_status`, `checks.cluster_worker_status`. Each defaults to `"disabled"` when the component is absent (test mode, pre-init).
+- **SSE events piggyback on `/api/scan/jobs/{id}/events`** via a `scan-{id}.events.jsonl` sidecar. The runner appends `new_photo` after every face-bearing image; the cluster worker appends `new_person` / `merged`. The SSE generator tails the sidecar (0.5s poll, seek-forward so reconnect doesn't replay).
+- **Frontend live updates** — `usePersonsLiveInvalidator(jobId)` subscribes to the SSE stream and invalidates the `persons` TanStack Query on `new_photo` / `new_person` / `merged`. `ScanProgressBanner` toasts `New photo indexed` (throttled to once per 1.5s) and `New person detected`. Zod schemas in `lib/api/schemas.ts` validate payloads.
+
+#### Configuration changes
+
+- **`[clustering] auto_recluster_min_new = 500`** → **`[clustering] recluster_threshold = 50`**. Aligns the TOML template with the Pydantic schema-of-record (`core/config.py:108 ClusteringConfig.recluster_threshold`). Existing TOMLs that still use the old key keep working — Pydantic's `extra='ignore'` silently drops it and the default (`50`) applies. Rename in your `config.toml` to force it into effect.
+
+#### Acceptance criteria
+
+- **AC-W8** — Drop a file in a whitelisted directory → it appears in `/api/persons` within 30s.
+- **AC-W8-SSE** — Watchdog trigger emits at least one `event: new_photo` on `/api/scan/jobs/{id}/events`.
+- **AC-W8-DELETE** — `DELETE /api/photos/{id}` returns 204; subsequent reads of `/api/persons` exclude the photo's faces from face_count / cover / photo list.
+
+#### Deferred to M8.5 / M9
+
+- Watchdog events on Linux CIFS shares (still unreliable; polling fallback applies).
+- Cross-process ScanRunner (current design is in-process asyncio task).
+- Hot-reload of `[scan] incremental_interval_sec` (read once at startup).
+
+#### Files touched
+
+| Module | Files |
+|---|---|
+| New services | `src/pick_face/service/file_watcher.py`, `src/pick_face/service/polling_scheduler.py` |
+| New worker | `src/pick_face/worker/cluster_worker.py` |
+| Modified worker | `src/pick_face/worker/scan_worker.py` (DEL pass + sidecar append), `src/pick_face/worker/runner.py` (`on_scan_complete` callback wire) |
+| Modified API | `src/pick_face/api/app.py` (lifespan: 4-component wiring), `src/pick_face/api/health.py` (queue depth + worker status), `src/pick_face/api/photos.py` (DELETE route), `src/pick_face/api/scan.py` (SSE sidecar tail) |
+| Modified services | `src/pick_face/service/scan_service.py` (`events_file()` accessor + sidecar lifecycle), `src/pick_face/service/photo_service.py` (`soft_delete` + `_mark_removed`), `src/pick_face/service/person_service.py` (active-source filter on every JOIN), `src/pick_face/service/config_service.py` (`recluster_threshold` template + `get_incremental_interval_sec` helper) |
+| Modified store | `src/pick_face/store/index.py` (`_VALID_SOURCE_STATUSES` constant) |
+| Frontend | `src/pick_face/web/app/src/lib/sse.ts` (typed `new_photo` / `new_person` / `merged` handlers), `src/pick_face/web/app/src/lib/api/schemas.ts` (event Zod schemas), `src/pick_face/web/app/src/lib/api/hooks.ts` (`usePersonsLiveInvalidator`), `src/pick_face/web/app/src/components/layout/ScanProgressBanner.tsx` (toast + invalidator wiring) |
+| Tests | `tests/unit/test_file_watcher.py` (new, 5), `tests/unit/test_polling_scheduler.py` (new, 4), `tests/unit/test_cluster_worker.py` (new, 9), `tests/unit/test_soft_delete.py` (new, 5), `tests/unit/test_scan_sse.py` (new, 4); `tests/unit/test_api_routes.py` (+3), `tests/unit/test_index_hnsw.py` (+4), `tests/integration/test_web_smoke.py` (+3); frontend `src/pick_face/web/app/src/__tests__/sse.test.ts` (new, 3), `ScanProgressBanner.test.tsx` (+2) |
+| Docs | `CHANGELOG.md`, `docs/05-data-and-storage.md` (§2.1 source.status extension), `docs/06-engineering-plan.md` (§3.1 status table + §3.3 implementation notes + §3.4 failure modes) |
+
+---
+
 ## [2.1.0] - 2026-08-10 — High-precision tier (yunet-arcface)
 
 Adds a second bundled model pack (`yunet-arcface`) alongside the
