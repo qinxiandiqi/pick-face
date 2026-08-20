@@ -1,0 +1,17 @@
+{
+  "name": "pick-face-monorepo",
+  "version": "4.0.0",
+  "private": true,
+  "description": "pick-face monorepo — Python service + TypeScript SPA",
+  "scripts": {
+    "build": "pnpm --filter @pick-face/web-ui build",
+    "build:web": "pnpm --filter @pick-face/web-ui build",
+    "test": "pnpm --filter @pick-face/web-ui test",
+    "test:web": "pnpm --filter @pick-face/web-ui test",
+    "lint": "pnpm -r lint"
+  },
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=20"
+  }
+}
