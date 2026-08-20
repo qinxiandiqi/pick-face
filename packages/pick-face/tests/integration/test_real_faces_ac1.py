@@ -192,7 +192,7 @@ def test_real_face_ac1(
     _run(
         [
             sys.executable,
-            str(repo_root / "tests" / "acceptance" / "run_eval.py"),
+            str(repo_root / "packages" / "pick-face" / "tests" / "acceptance" / "run_eval.py"),
             "--db",
             str(db),
             "--truth",

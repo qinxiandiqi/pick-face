@@ -19,7 +19,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[4]
-DATASET_DIR = ROOT / "tests" / "fixtures" / "real_faces"
+PKG = ROOT / "packages" / "pick-face"
+DATASET_DIR = PKG / "tests" / "fixtures" / "real_faces"
 MANIFEST = DATASET_DIR / "manifest.json"
 
 

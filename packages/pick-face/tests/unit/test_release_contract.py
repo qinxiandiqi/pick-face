@@ -25,6 +25,7 @@ import tomllib
 from pick_face import __version__
 
 REPO = Path(__file__).resolve().parents[4]
+PKG = REPO / "packages" / "pick-face"
 
 
 def test_version_is_semver_with_major_ge_1() -> None:
@@ -46,7 +47,7 @@ def test_version_is_semver_with_major_ge_1() -> None:
 
 
 def test_classifier_is_production_stable() -> None:
-    pyproject = tomllib.loads((REPO / "packages" / "pick-face" / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = tomllib.loads((PKG / "pyproject.toml").read_text(encoding="utf-8"))
     classifiers = pyproject["project"]["classifiers"]
     assert "Development Status :: 5 - Production/Stable" in classifiers, (
         f"classifiers missing '5 - Production/Stable': {classifiers}"
@@ -54,27 +55,27 @@ def test_classifier_is_production_stable() -> None:
 
 
 def test_changelog_has_1_0_entry() -> None:
-    text = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    text = (PKG / "CHANGELOG.md").read_text(encoding="utf-8")
     assert re.search(r"^##\s+\[1\.0\.\d+\]", text, re.MULTILINE), (
         "CHANGELOG.md must have a [1.0.x] section for the 1.0 release."
     )
 
 
 def test_changelog_links_to_compat_promise() -> None:
-    text = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    text = (PKG / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "12-compatibility-promise" in text, (
         "CHANGELOG.md must reference docs/12-compatibility-promise.md"
     )
 
 
 def test_compat_promise_doc_exists() -> None:
-    assert (REPO / "docs" / "12-compatibility-promise.md").exists(), (
+    assert (PKG / "docs" / "12-compatibility-promise.md").exists(), (
         "docs/12-compatibility-promise.md must exist for the 1.0 contract."
     )
 
 
 def test_compat_promise_doc_covers_required_sections() -> None:
-    text = (REPO / "docs" / "12-compatibility-promise.md").read_text(encoding="utf-8")
+    text = (PKG / "docs" / "12-compatibility-promise.md").read_text(encoding="utf-8")
     for heading in (
         "Public CLI surface",
         "Python public API",
@@ -89,7 +90,7 @@ def test_compat_promise_doc_covers_required_sections() -> None:
 def test_mkdocs_nav_includes_compat_promise() -> None:
     import yaml
 
-    data = yaml.safe_load((REPO / "mkdocs.yml").read_text(encoding="utf-8"))
+    data = yaml.safe_load((PKG / "mkdocs.yml").read_text(encoding="utf-8"))
 
     def _flatten(node) -> list[str]:
         """Yield every string-valued leaf from a (possibly nested) mkdocs nav entry."""
@@ -114,7 +115,7 @@ def test_mkdocs_nav_includes_compat_promise() -> None:
 
 
 def test_readme_references_compat_promise() -> None:
-    text = (REPO / "README.md").read_text(encoding="utf-8")
+    text = (PKG / "README.md").read_text(encoding="utf-8")
     assert "12-compatibility-promise" in text, (
         "README.md must link to docs/12-compatibility-promise.md"
     )

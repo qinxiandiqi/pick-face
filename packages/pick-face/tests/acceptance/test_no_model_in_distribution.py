@@ -19,7 +19,7 @@ import subprocess
 import zipfile
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent.parent
+REPO = Path(__file__).resolve().parents[4]
 
 # Paths we never descend into.
 SKIP_DIRS = {
@@ -80,7 +80,7 @@ def test_no_onnx_in_git_tracked_files() -> None:
 def test_no_onnx_in_built_wheel_or_sdist() -> None:
     """If dist/ has been built, both .whl and the .tar.gz must be free
     of *.onnx. Skip silently if dist/ doesn't exist (build-on-demand CI)."""
-    dist = REPO / "dist"
+    dist = REPO / "packages" / "pick-face" / "dist"
     if not dist.exists():
         return  # not built yet
     archives = list(dist.glob("*.whl")) + list(dist.glob("*.tar.gz"))

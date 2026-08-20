@@ -28,7 +28,7 @@ from pathlib import Path
 import pytest
 import tomllib
 
-REPO = Path(__file__).resolve().parent.parent.parent
+REPO = Path(__file__).resolve().parents[4]
 
 
 def test_default_pack_is_yunet_sface() -> None:
@@ -66,7 +66,7 @@ def test_no_insightface_in_default_deps() -> None:
     `[insightface]` extras or the third-party
     `pick-face-modelpack-insightface` plugin.
     """
-    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = tomllib.loads((REPO / "packages" / "pick-face" / "pyproject.toml").read_text(encoding="utf-8"))
     deps = pyproject["project"]["dependencies"]
     offenders = [d for d in deps if d.lower().startswith("insightface")]
     assert not offenders, (
@@ -80,7 +80,7 @@ def test_yunet_sface_entry_point_registered() -> None:
     entry-point group so `discover_packs()` can find it without explicit
     imports.
     """
-    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = tomllib.loads((REPO / "packages" / "pick-face" / "pyproject.toml").read_text(encoding="utf-8"))
     eps = pyproject["project"].get("entry-points", {}).get("pick_face.model_packs", {})
     assert "yunet-sface" in eps, (
         f"`yunet-sface` must be registered under [project.entry-points."
@@ -93,7 +93,7 @@ def test_yunet_mfn_alias_still_registered() -> None:
     v1.x configs that still reference the old id don't silently fail
     at startup — the alias raises a clear "use yunet-sface" message.
     """
-    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = tomllib.loads((REPO / "packages" / "pick-face" / "pyproject.toml").read_text(encoding="utf-8"))
     eps = pyproject["project"].get("entry-points", {}).get("pick_face.model_packs", {})
     assert "yunet-mfn" in eps, (
         f"`yunet-mfn` deprecated alias must remain registered for back-compat; got: {sorted(eps)}"
@@ -108,7 +108,7 @@ def test_onnxruntime_is_default_dep() -> None:
     `insightface` is that we don't pull any NC-research weights by
     default.
     """
-    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = tomllib.loads((REPO / "packages" / "pick-face" / "pyproject.toml").read_text(encoding="utf-8"))
     deps = pyproject["project"]["dependencies"]
     assert any(d.lower().startswith("onnxruntime") for d in deps), (
         "onnxruntime must remain a default dep so the yunet-sface pack "
@@ -136,7 +136,7 @@ def test_yunet_arcface_entry_point_registered() -> None:
     `pick_face.model_packs` so `discover_packs()` finds it without
     explicit imports.
     """
-    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = tomllib.loads((REPO / "packages" / "pick-face" / "pyproject.toml").read_text(encoding="utf-8"))
     eps = pyproject["project"].get("entry-points", {}).get("pick_face.model_packs", {})
     assert "yunet-arcface" in eps, (
         f"`yunet-arcface` must be registered under [project.entry-points."

@@ -10,9 +10,9 @@ import sys
 from pathlib import Path
 
 # Load run_eval.py directly (it lives outside the src/ tree).
-_REPO = Path(__file__).resolve().parent.parent.parent
+_REPO = Path(__file__).resolve().parents[4]
 _spec = importlib.util.spec_from_file_location(
-    "run_eval", _REPO / "tests" / "acceptance" / "run_eval.py"
+    "run_eval", _REPO / "packages" / "pick-face" / "tests" / "acceptance" / "run_eval.py"
 )
 assert _spec and _spec.loader
 run_eval = importlib.util.module_from_spec(_spec)

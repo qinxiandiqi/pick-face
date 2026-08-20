@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[4]
-MKDOCS_YML = REPO / "mkdocs.yml"
+PKG = REPO / "packages" / "pick-face"
+MKDOCS_YML = PKG / "mkdocs.yml"
 
 
 def test_mkdocs_yml_exists() -> None:
@@ -41,7 +42,7 @@ def test_mkdocs_nav_references_existing_files() -> None:
         else:
             continue
         if isinstance(target, str) and target.endswith(".md"):
-            full = REPO / "docs" / target
+            full = PKG / "docs" / target
             if not full.exists():
                 missing.append(target)
     assert not missing, f"mkdocs nav references missing files: {missing}"
@@ -49,12 +50,12 @@ def test_mkdocs_nav_references_existing_files() -> None:
 
 def test_docs_index_exists() -> None:
     """The mkdocs landing page exists."""
-    assert (REPO / "docs" / "index.md").exists()
+    assert (PKG / "docs" / "index.md").exists()
 
 
 def test_docs_index_links_to_compliance_first() -> None:
     """docs/index.md must mention the commercial-compliance doc near the top."""
-    text = (REPO / "docs" / "index.md").read_text(encoding="utf-8")
+    text = (PKG / "docs" / "index.md").read_text(encoding="utf-8")
     # The compliance doc link must appear within the first 60 lines.
     head = "\n".join(text.splitlines()[:60])
     assert "11-commercial-compliance" in head
@@ -62,5 +63,5 @@ def test_docs_index_links_to_compliance_first() -> None:
 
 def test_readme_references_compliance() -> None:
     """README.md must reference the commercial-compliance doc."""
-    text = (REPO / "README.md").read_text(encoding="utf-8")
+    text = (PKG / "README.md").read_text(encoding="utf-8")
     assert "11-commercial-compliance" in text
