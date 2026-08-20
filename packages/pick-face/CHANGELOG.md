@@ -9,6 +9,32 @@ the full policy.
 
 ---
 
+## [4.0.2] - 2026-08-20 — **Native folder picker on "Add scan path"**
+
+### Changed
+
+- **PathAddDialog** now exposes a system-folder picker alongside the
+  manual text input. Clicking **Browse** invokes the OS-native folder
+  chooser via `<input webkitdirectory>` — on Windows the standard
+  Explorer picker, on macOS the native open panel, on Linux the GTK /
+  Qt dialog the browser is built against.
+
+  Browser security note (also surfaced in a hint inside the dialog):
+  Chromium / Safari / Edge do not expose the picked folder's absolute
+  path to the page — only its name. Firefox does (via `File.path`
+  since v49). When only the name is recoverable, the dialog pre-fills
+  the leaf and a small note asks the user to add the parent path.
+  The backend whitelist still requires an absolute path to walk, so
+  the text input remains editable either way.
+
+### Tests
+
+- +4 new frontend tests (PathAddDialog.test.tsx): feature detection,
+  Firefox-shaped pick with absolute path, Chromium-shaped pick with
+  leaf-name fallback + hint, hint cleared on close + reopen.
+
+---
+
 ## [4.0.1] - 2026-08-20 — **SSE-driven scan state (polling removed)**
 
 Replaced the 2-second polling of `/api/scan/jobs/active` with a push-based
