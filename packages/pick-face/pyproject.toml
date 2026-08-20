@@ -1,0 +1,238 @@
+[project]
+name = "pick-face"
+description = "Local-first face-photo gallery web service"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Jianan" }]
+requires-python = ">=3.10,<3.14"
+keywords = ["face-recognition", "image-organization", "offline", "cli"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Utilities",
+]
+dynamic = ["version"]
+
+dependencies = [
+    "numpy>=1.24,<3",
+    "Pillow>=10,<12",
+    "opencv-python>=4.8,<5",
+    "typer>=0.12,<1",
+    "rich>=13,<15",
+    "pydantic>=2.5,<3",
+    "xxhash>=3.4,<4",
+    "hnswlib>=0.7,<1",
+    "hdbscan>=0.8.30,<1",
+    # onnxruntime is required by the bundled yunet-sface pack. GPU users
+    # should `uv pip install -U onnxruntime-gpu` over the top. 1.24+ is
+    # the first line that ships numpy 2.x compatible wheels.
+    "onnxruntime>=1.24,<2",
+    "platformdirs>=4,<5",
+]
+
+[project.entry-points."pick_face.model_packs"]
+# Bundled default pack (route B). MIT per opencv_zoo per-model LICENSE
+# (face_detection_yunet/ + face_recognition_sface/), Pi 3B friendly, ~10 MB.
+# Renamed from `yunet-mfn` (MobileFaceNet INT8) to `yunet-sface` after
+# upstream removed the MobileFaceNet weights from opencv_zoo in 2025.
+# The deprecated `yunet-mfn` id is still registered (as an alias that
+# points users at yunet-sface) so existing v1.x configs keep working.
+yunet-sface = "pick_face.platform.packs.yunet_sface:YuNetSfacePack"
+yunet-mfn = "pick_face.platform.packs.yunet_sface:_DeprecatedYuNetMFNPack"
+# High-precision tier (route B). YuNet detector (MIT) + ArcFace R100
+# embedder (Apache-2.0 from ONNX Model Zoo), 512-D, FP32+INT8 variants.
+# Use `--quant int8` for ARM / low-RAM hosts (~66 MB on disk).
+yunet-arcface = "pick_face.platform.packs.yunet_arcface:YuNetArcFacePack"
+
+[project.optional-dependencies]
+# Single-format extras. None of these change core behavior; they only add
+# decoders or providers that the runtime detects via importlib.util.find_spec.
+heic = ["pillow-heif>=0.16,<1"]
+raw = ["rawpy>=0.18,<1"]
+
+# Provider extras. `gpu` is the union so most users get one knob.
+gpu = ["onnxruntime-gpu>=1.24,<2"]
+gpu-cuda12 = ["onnxruntime-gpu>=1.24,<1.25; python_version<'3.13'"]
+gpu-directml = ["onnxruntime-directml>=1.24,<2"]
+
+# InsightFace opt-in pack (route A legacy NC-research models).
+# Installed transitively by the third-party `pick-face-modelpack-insightface`
+# package — kept here as a single-source-of-truth so a `pip install
+# pick-face[insightface]` works for users who want both the plugin and
+# the upstream package.
+insightface = ["insightface>=0.7.3,<1"]
+
+# Dev extras. NOT shipped in `all` (test/CI don't need prod extras).
+dev = [
+    "pytest>=8,<9",
+    "pytest-cov>=5,<6",
+    "pytest-benchmark>=4,<5",
+    "pytest-asyncio>=0.23,<1",
+    "httpx>=0.27,<1",
+    "ruff>=0.6,<1",
+    "mypy>=1.10,<2",
+    "pre-commit>=3.8,<5",
+    "pip-audit>=2.7,<3",
+    "types-Pillow",
+]
+
+# Docs extras (build the mkdocs site). NOT shipped in `all`.
+docs = [
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.5,<10",
+]
+
+# Web service extras (v3.0). FastAPI app + background workers + file
+# watcher. Kept optional so the v2.x CLI install (`uv pip install
+# pick-face`) doesn't pull in fastapi/uvicorn if you only want CLI.
+# Install with: `uv pip install -e ".[web]"`.
+web = [
+    "fastapi>=0.110,<1",
+    "uvicorn[standard]>=0.27,<1",
+    "watchdog>=4,<7",
+    "apscheduler>=3.10,<4",
+    "python-multipart>=0.0.9,<1",
+]
+
+# Convenience aggregators.
+all-decode = ["pick-face[heic,raw]"]
+all-gpu = ["pick-face[gpu]"]
+all = ["pick-face[heic,raw,gpu,web]"]
+
+[project.scripts]
+pick-face = "pick_face.cli:main"
+pick-face-web = "pick_face.web_cli:main"
+
+[project.urls]
+Documentation = "https://github.com/qinxiandiqi/pick-face/blob/main/docs/AGENTS.md"
+Source = "https://github.com/qinxiandiqi/pick-face"
+Issues = "https://github.com/qinxiandiqi/pick-face/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/pick_face/__init__.py"
+pattern = "__version__\\s*=\\s*[\"'](?P<version>[^\"']+)[\"']"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pick_face"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/pick_face",
+    "docs",
+    "tests",
+    "migrations",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "mkdocs.yml",
+]
+exclude = [
+    # Tests produce scratch dirs; never ship them.
+    "tests/smoke_out",
+    "tests/__pycache__",
+    "tests/*/__pycache__",
+    # CI workflow is host-side, not user-side.
+    ".github",
+    # M7 — sdist stays source-only. The SPA source lives at the monorepo
+    # root in `packages/web-ui/`; CI builds it into `web/static/` before
+    # `uv build`, so the wheel always carries the freshest bundle.
+    # Consumers of sdist have no Node toolchain.
+    "src/pick_face/web/static",
+    "src/pick_face/web/static/**",
+]
+
+# ============================================================================
+# Tool 配置
+# ============================================================================
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "N",   # pep8-naming
+    "C4",  # flake8-comprehensions
+]
+ignore = [
+    "E501",  # line too long (黑名单已被 formatter 处理)
+    "B008",  # do not perform function calls in argument defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "N"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.10"
+strict_optional = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # 渐进式: v0.1 不强制全量
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["insightface.*", "hnswlib.*", "hdbscan.*", "rawpy.*", "cv2.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+# Skip real-face tests by default — they require a dataset fetched via
+# `scripts/fetch_face_dataset.py`. Opt in with `-m real_data` (or
+# `--runxfail` style override) when the dataset is available.
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+    "-m",
+    "not real_data",
+]
+markers = [
+    "unit: unit tests (fast, no external deps)",
+    "integration: integration tests (may hit filesystem)",
+    "acceptance: acceptance tests (AC-1~AC-9)",
+    "real_data: real-face integration tests (skipped unless dataset fetched)",
+    "web_smoke: end-to-end smoke tests for the v3 Web service (FastAPI + ScanRunner)",
+    "slow: slow tests (>1s)",
+]
+
+[tool.coverage.run]
+source = ["src/pick_face"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
+skip_covered = false
+fail_under = 60

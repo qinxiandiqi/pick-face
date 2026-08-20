@@ -1,0 +1,15 @@
+pick-face real-face test fixture
+================================
+
+Dataset: AT&T / ORL / Olivetti Faces
+License: CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+
+Attribution (required by CC-BY 4.0):
+  AT&T Laboratories Cambridge (formerly Olivetti Research Laboratory). Source: https://www.cl.cam.ac.uk/research/dtg/attarchive/facedatabase.html
+
+Modifications:
+  - Re-bundled from per-subject .pgm archives into
+    person_NNN/<seq>.<ext> layout.
+  - Not redistributed in source form; this NOTICE is the
+    only required attribution carried inside the test
+    fixture directory.
