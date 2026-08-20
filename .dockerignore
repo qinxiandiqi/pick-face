@@ -45,11 +45,11 @@ bench/dataset_demo/**/*.raw
 bench/dataset_demo/**/*.cr2
 bench/dataset_demo/**/*.nef
 bench/dataset_demo/**/*.dng
-tests/fixtures/demo_dataset/raw/
-tests/fixtures/demo_dataset/img/
-tests/fixtures/**/*.jpg
-tests/fixtures/**/*.jpeg
-tests/fixtures/**/*.png
+packages/pick-face/tests/fixtures/demo_dataset/raw/
+packages/pick-face/tests/fixtures/demo_dataset/img/
+packages/pick-face/tests/fixtures/**/*.jpg
+packages/pick-face/tests/fixtures/**/*.jpeg
+packages/pick-face/tests/fixtures/**/*.png
 
 
 # === Python 制品 (镜像里只要 src/, 不要构建产物) ===
@@ -186,8 +186,11 @@ uv-cache/
 
 # === 故意要带进镜像的 (留白, 用 ! 显式) ===
 # 注意: Dockerfile 里用 `uv pip install -e ".[dev]"` 拉依赖, 不需要 requirements.txt 进 context
-# 但要带: src/  tests/  migrations/  pyproject.toml  requirements.lock  docs/  README.md  LICENSE
-!pyproject.toml
+# 但要带: packages/pick-face/src/  packages/pick-face/tests/  packages/pick-face/pyproject.toml
+#         packages/pick-face/docs/  packages/pick-face/README.md  packages/pick-face/LICENSE
+# v4 monorepo: SPA bundle is pre-built into packages/pick-face/src/pick_face/web/static/
+# before the Docker build, so no Node toolchain is required in the image.
+!packages/pick-face/pyproject.toml
 !requirements.lock
-!README.md
-!LICENSE
+!packages/pick-face/README.md
+!packages/pick-face/LICENSE

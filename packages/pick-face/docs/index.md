@@ -166,13 +166,14 @@ mkdocs serve                           # docs site at :8000
 mkdocs build                           # static site under site/
 ```
 
-Frontend (SPA: React + Vite + TS + shadcn/ui + Tailwind):
+Frontend (SPA: React + Vite + TS + shadcn/ui + Tailwind) — v4 monorepo,
+lives at the repo root in `packages/web-ui/`:
 
 ```bash
-cd src/web
+cd packages/web-ui          # from the repo root
 pnpm install
 pnpm run dev          # http://localhost:5173 (proxies API to 8000)
-pnpm run build        # → src/pick_face/web/static/
+pnpm run build        # → ../pick-face/src/pick_face/web/static/
 pnpm run gen-api      # OpenAPI → TypeScript client
 pnpm dlx shadcn@latest add dialog   # add new shadcn/ui component
 ```

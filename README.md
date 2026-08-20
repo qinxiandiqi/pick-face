@@ -24,9 +24,9 @@ pnpm dev
 pick-face/
 ├── packages/
 │   ├── pick-face/    # Python wheel (CLI + FastAPI service + Vite static host)
+│   │   ├── scripts/  # Maintenance scripts (fetch_face_dataset.py, pin_sha256.py)
 │   └── web-ui/       # React + Vite SPA
 ├── plugins/          # Third-party Python model-pack plugins
-├── scripts/          # Repository-level maintenance scripts
 └── pick-face.toml    # Example user config (copy to ~/.pick-face/config.toml)
 ```
 

@@ -46,21 +46,14 @@ weights/
 # ============================================================
 # 不让 demo 数据集 / WebFace4M / Glint360K 等大文件入仓
 # 文档里只放 README + 生成脚本, 数据走 git-lfs 或独立下载
-bench/dataset_demo/raw/
-bench/dataset_demo/img/
-bench/dataset_demo/**/*.jpg
-bench/dataset_demo/**/*.jpeg
-bench/dataset_demo/**/*.png
-bench/dataset_demo/**/*.heic
-bench/dataset_demo/**/*.raw
-bench/dataset_demo/**/*.cr2
-bench/dataset_demo/**/*.nef
-bench/dataset_demo/**/*.dng
-tests/fixtures/demo_dataset/raw/
-tests/fixtures/demo_dataset/img/
-tests/fixtures/**/*.jpg
-tests/fixtures/**/*.jpeg
-tests/fixtures/**/*.png
+# v4 monorepo: fixtures live at packages/pick-face/tests/fixtures/.
+# Patterns below use the monorepo path so future web-ui or root-level
+# test directories can't accidentally pick up real-face images.
+packages/pick-face/tests/fixtures/demo_dataset/raw/
+packages/pick-face/tests/fixtures/demo_dataset/img/
+packages/pick-face/tests/fixtures/**/*.jpg
+packages/pick-face/tests/fixtures/**/*.jpeg
+packages/pick-face/tests/fixtures/**/*.png
 
 # ============================================================
 # 3. Python 构建 / 制品 (绝不进仓)

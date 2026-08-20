@@ -39,8 +39,8 @@ functionality, APIs, or commands.
   `cd packages/web-ui` before `uv run …` / `pnpm …`.
 - `pick-face` and `pick-face-web` console scripts work unchanged
   (wheel entry points preserved).
-- All 438 backend tests + 70 frontend tests pass without modification
-  beyond path depth adjustments in 6 test files.
+- All 433 backend tests + 70 frontend tests pass (1 skip: heic extra)
+  with only path-depth adjustments in 7 test files.
 
 ---
 
