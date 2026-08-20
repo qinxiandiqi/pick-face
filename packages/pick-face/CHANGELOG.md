@@ -9,6 +9,53 @@ the full policy.
 
 ---
 
+## [4.0.1] - 2026-08-20 — **SSE-driven scan state (polling removed)**
+
+Replaced the 2-second polling of `/api/scan/jobs/active` with a push-based
+Server-Sent Events stream. The ScanProgressBanner now updates only when
+the active job actually changes — no more hammering the backend every
+2 seconds while the user sits on the gallery page.
+
+### Changed
+
+- **New endpoint** `GET /api/scan/events` — global SSE stream of the
+  active scan job. Emits `event: snapshot` on connect (current job or
+  `null`), `event: job_update` whenever the active job's identity /
+  state / progress changes, and `event: ping` every 15 s as a
+  heartbeat. The per-job stream `GET /api/scan/jobs/{id}/events`
+  (M8-T-8) is unchanged and still drives the fine-grained cluster
+  events consumed by `usePersonsLiveInvalidator`.
+- **New hook** `useActiveScanJobStream()` (replaces
+  `useActiveScanJobQuery`) — opens an EventSource to the new endpoint
+  and returns the same `{data: ScanJob | null}` shape. The browser's
+  built-in auto-reconnect covers transient network drops.
+- **`ScanState` zod enum** now uses lowercase values (`"running"`,
+  `"done"`, …) to match the backend's `ScanState.value` wire format.
+  Earlier versions silently dropped `state` on every payload (zod's
+  default strip), so the banner never showed the spinner even when a
+  scan was in flight. Now it does.
+- **`ScanJobSchema`** now also accepts `eta_sec` (new on the backend)
+  and `paths` (optional — older polling payloads may omit it).
+
+### Removed
+
+- `useActiveScanJobQuery` (polling hook) and `api.getActiveScanJob`
+  (frontend wrapper for `/jobs/active`). The REST endpoint itself is
+  still served by the backend and remains useful for `curl` / scripts.
+- `useStartScanMutation`'s `onSuccess` cache invalidation — the global
+  SSE pushes a fresh `job_update` automatically when the runner
+  transitions the new job to `running`.
+
+### Migration notes
+
+- No data migration needed.
+- All 443 backend tests + 74 frontend tests pass (1 skip: heic extra).
+- 2 new backend tests (global SSE emits snapshot + on-change
+  job_update; null snapshot when no active job) and 4 new frontend
+  schema tests for the global-stream payload shape.
+
+---
+
 ## [4.0.0] - 2026-08-20 — **Monorepo organization**
 
 Restructured the project into a pnpm workspace without changing any

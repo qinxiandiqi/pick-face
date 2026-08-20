@@ -1,17 +1,21 @@
-// SSE schema round-trip tests (M8-T-8).
+// SSE schema round-trip tests.
 //
-// The frontend subscribes to `/api/scan/jobs/{id}/events` via
-// `openScanEventStream` (lib/sse.ts). The backend appends JSONL
-// records to `scan-{id}.events.jsonl` and the SSE generator emits
-// them as `event: <type>` + `data: <json>`.
+// Two streams are covered here:
 //
-// We exercise the zod schema directly with sample payloads that match
+//   1. Per-job stream  — `/api/scan/jobs/{id}/events` (M8-T-8):
+//      ``new_photo`` / ``new_person`` / ``merged`` / ``progress``.
+//
+//   2. Global stream  — `/api/scan/events` (SSE-driven banner):
+//      ``snapshot`` / ``job_update`` payloads shaped like ``ScanJob``.
+//
+// We exercise the zod schemas directly with sample payloads that match
 // what the backend writes. If the backend shape changes, these tests
 // should fail loudly so we update both sides in lockstep.
 
 import { describe, expect, it } from "vitest";
 
 import {
+  ScanJobSchema,
   ScanMergedEventSchema,
   ScanNewPersonEventSchema,
   ScanNewPhotoEventSchema,
@@ -68,12 +72,70 @@ describe("sse event schemas (M8-T-8)", () => {
   it("ScanProgressEventSchema accepts a valid progress payload", () => {
     const ok = ScanProgressEventSchema.safeParse({
       job_id: "abc-123",
-      state: "RUNNING",
+      state: "running",
       processed: 10,
       total: 20,
       faces: 7,
       errors: 0,
     });
     expect(ok.success).toBe(true);
+  });
+});
+
+describe("global scan-event stream payload (ScanJobSchema)", () => {
+  it("accepts a fully-populated snapshot with eta_sec", () => {
+    const ok = ScanJobSchema.nullable().safeParse({
+      id: "abc-123",
+      kind: "full",
+      state: "running",
+      paths: ["/tmp/photos"],
+      started_at: "2026-08-20T10:00:00+00:00",
+      ended_at: null,
+      progress: { processed: 5, total: 10, faces: 3, errors: 0, eta_sec: 42 },
+      error: null,
+    });
+    expect(ok.success).toBe(true);
+    if (ok.success && ok.data) {
+      expect(ok.data.progress.eta_sec).toBe(42);
+      expect(ok.data.kind).toBe("full");
+    }
+  });
+
+  it("accepts a snapshot where eta_sec is null", () => {
+    const ok = ScanJobSchema.nullable().safeParse({
+      id: "abc-123",
+      kind: "incremental",
+      state: "running",
+      paths: [],
+      started_at: null,
+      ended_at: null,
+      progress: { processed: 0, total: 0, faces: 0, errors: 0, eta_sec: null },
+      error: null,
+    });
+    expect(ok.success).toBe(true);
+  });
+
+  it("accepts a null snapshot (no active job)", () => {
+    const ok = ScanJobSchema.nullable().safeParse(null);
+    expect(ok.success).toBe(true);
+    expect(ok.data).toBeNull();
+  });
+
+  it("accepts an FAILED terminal snapshot with error message", () => {
+    const ok = ScanJobSchema.nullable().safeParse({
+      id: "deadbeef",
+      kind: "incremental",
+      state: "failed",
+      paths: ["/tmp/photos"],
+      started_at: "2026-08-20T10:00:00+00:00",
+      ended_at: "2026-08-20T10:00:05+00:00",
+      progress: { processed: 2, total: 10, faces: 1, errors: 1, eta_sec: null },
+      error: "decoder crashed",
+    });
+    expect(ok.success).toBe(true);
+    if (ok.success && ok.data) {
+      expect(ok.data.state).toBe("failed");
+      expect(ok.data.error).toBe("decoder crashed");
+    }
   });
 });

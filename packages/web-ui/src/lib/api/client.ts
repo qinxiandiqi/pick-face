@@ -111,11 +111,12 @@ export const api = {
   // Scan
   listScanJobs: () =>
     request<{ jobs: import("@/lib/api/schemas").ScanJob[] }>("GET", "/scan/jobs"),
-  getActiveScanJob: () =>
-    request<import("@/lib/api/schemas").ScanJob | null>(
-      "GET",
-      "/scan/jobs/active",
-    ),
+  // The polling endpoint ``GET /scan/jobs/active`` still exists on the
+  // backend (one-shot query, useful for curl / scripts) but the SPA
+  // gets the same data via the global SSE stream
+  // (useActiveScanJobStream → /api/scan/events). Keeping no client
+  // wrapper for it discourages new components from re-introducing
+  // polling.
   getScanJob: (id: string) =>
     request<import("@/lib/api/schemas").ScanJob>("GET", `/scan/jobs/${id}`),
   startScanJob: (kind: "incremental" | "full") =>

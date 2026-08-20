@@ -8,6 +8,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query";
+import * as React from "react";
 import { useEffect } from "react";
 
 import { api } from "@/lib/api/client";
@@ -89,21 +90,72 @@ export function useDeletePathMutation(): UseMutationResult<void, Error, number> 
 // Scan
 // ---------------------------------------------------------------------------
 
-export function useActiveScanJobQuery(opts?: { refetchInterval?: number }): UseQueryResult<ScanJob | null> {
-  return useQuery({
-    queryKey: ["scan-active"],
-    queryFn: () => api.getActiveScanJob(),
-    refetchInterval: opts?.refetchInterval ?? 2_000,
-  });
+// Push-based replacement for the legacy `useActiveScanJobQuery`
+// polling hook (M8 → SSE switchover). Opens an EventSource to
+// ``/api/scan/events``, which emits a ``snapshot`` on connect and a
+// ``job_update`` whenever the active job's identity / state / progress
+// changes. Returns the same ``{data: ScanJob | null}`` shape so the
+// ScanProgressBanner can swap implementations without rewiring callers.
+//
+// The browser's EventSource auto-reconnects on transient errors; we
+// just surface a single ``onError`` toast in the consuming banner.
+//
+// Implementation note: we deliberately do NOT use ``useQuery`` here —
+// SSE state lives outside the TanStack cache and re-renders are driven
+// by React state updates inside the effect below. Reusing the
+// ``["scan-active"]`` key would cause two competing sources of truth.
+export function useActiveScanJobStream(): {
+  data: ScanJob | null;
+  status: "connecting" | "open" | "closed";
+} {
+  const [data, setData] = React.useState<ScanJob | null>(null);
+  const [status, setStatus] = React.useState<"connecting" | "open" | "closed">("connecting");
+
+  useEffect(() => {
+    // EventSource is a browser-only constructor; dynamic-import the
+    // helper so SSR / jsdom-without-polyfill tests can import this
+    // module without crashing.
+    let es: EventSource | null = null;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { openGlobalScanEventStream } = await import("@/lib/sse");
+        if (cancelled) return;
+        es = openGlobalScanEventStream({
+          onSnapshot: (job) => {
+            setData(job);
+            setStatus("open");
+          },
+          onJobUpdate: (job) => {
+            setData(job);
+          },
+          onError: () => {
+            setStatus("closed");
+            // Browser EventSource auto-reconnects; the next
+            // ``snapshot`` event will flip status back to "open".
+          },
+        });
+      } catch {
+        // EventSource unavailable (SSR, Node test env). Leave data as
+        // null — banner renders nothing, same as before any scan.
+        setStatus("closed");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      es?.close();
+    };
+  }, []);
+
+  return { data, status };
 }
 
 export function useStartScanMutation(): UseMutationResult<{ id: string }, Error, "incremental" | "full"> {
-  const qc = useQueryClient();
+  // No cache invalidation needed — the global ``/api/scan/events``
+  // SSE pushes a fresh ``job_update`` when the runner transitions
+  // the new job to RUNNING, which the banner picks up automatically.
   return useMutation({
     mutationFn: (kind) => api.startScanJob(kind),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["scan-active"] });
-    },
   });
 }
 
@@ -167,10 +219,9 @@ export function usePhotoMetadataQuery(
 // signal cluster-side mutations (`new_photo` / `new_person` / `merged`)
 // and refetches any active `persons` query. Used by the SPA
 // ScanProgressBanner so the Persons grid refreshes within ~0.5s of an
-// incremental event instead of waiting for the next `scan-active`
-// poll tick.
+// incremental event instead of waiting for the next global ``job_update``.
 //
-// The hook takes a jobId (typically `useActiveScanJobQuery`'s result)
+// The hook takes a jobId (typically `useActiveScanJobStream`'s result)
 // and silently does nothing when the job is null or already terminal.
 // ---------------------------------------------------------------------------
 
@@ -196,7 +247,6 @@ export function usePersonsLiveInvalidator(
           onNewPhoto: (e) => {
             options?.onNewPhoto?.();
             void qc.invalidateQueries({ queryKey: ["persons"] });
-            void qc.invalidateQueries({ queryKey: ["scan-active"] });
             // photo count + face count may have changed.
             if (e.photo_id) {
               void qc.invalidateQueries({

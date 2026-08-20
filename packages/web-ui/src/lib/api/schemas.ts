@@ -104,12 +104,20 @@ export type PathUpdate = z.infer<typeof PathUpdateSchema>;
 // Scan jobs
 // ============================================================================
 
+// Wire format: ScanState values are serialized lowercase by the
+// backend (`api.scan._serialize` → ``job.state.value`` where the enum
+// uses ``"running"`` / ``"queued"`` / …). Earlier the frontend used
+// uppercase strings, which made zod silently drop the field on every
+// payload — the banner then saw ``state === undefined`` and always
+// took the "no spinner" branch. Aligning here means all consumers
+// (banner, scan query, SSE events) speak the same vocabulary.
 export const ScanState = z.enum([
-  "QUEUED",
-  "RUNNING",
-  "DONE",
-  "FAILED",
-  "CANCELLED",
+  "queued",
+  "running",
+  "paused",
+  "done",
+  "failed",
+  "cancelled",
 ]);
 export type ScanState = z.infer<typeof ScanState>;
 
@@ -117,11 +125,17 @@ export const ScanJobSchema = z.object({
   id: z.string(),
   kind: z.string(), // "incremental" | "full"
   state: ScanState,
+  // Backend always emits this; older ``/jobs/active`` responses
+  // (M7 and earlier) may omit it — accept either shape so callers
+  // can use the same type for both legacy polling and the new
+  // global SSE.
+  paths: z.array(z.string()).optional(),
   progress: z.object({
     processed: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
     faces: z.number().int().nonnegative(),
     errors: z.number().int().nonnegative(),
+    eta_sec: z.number().int().nonnegative().nullable().optional(),
   }),
   started_at: z.string().optional().nullable(),
   ended_at: z.string().optional().nullable(),

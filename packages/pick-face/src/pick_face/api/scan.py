@@ -7,7 +7,10 @@ Routes:
 - ``POST   /api/scan/jobs``               enqueue a new job
 - ``GET    /api/scan/jobs/{id}``          single job
 - ``PATCH  /api/scan/jobs/{id}``          pause / resume / cancel
-- ``GET    /api/scan/jobs/{id}/events``   SSE progress stream
+- ``GET    /api/scan/jobs/{id}/events``   per-job SSE progress stream
+- ``GET    /api/scan/events``             global SSE stream of the active
+                                          job (snapshot + on-change pushes);
+                                          replaces polling ``/jobs/active``
 
 The actual file-walking + embedding work lives in
 :mod:`pick_face.worker.scan_worker`. The router hands off to the
@@ -248,6 +251,111 @@ async def job_events(
             if await request.is_disconnected():
                 return
             await asyncio.sleep(0.5)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# -----------------------------------------------------------------------------
+# Global scan-events stream (push-based replacement for polling /jobs/active)
+# -----------------------------------------------------------------------------
+#
+# The SPA's ScanProgressBanner used to call ``GET /api/scan/jobs/active``
+# every 2 s via TanStack Query refetchInterval. That keeps the active-job
+# arrow spinning but is wasteful: nothing pushes, every browser tick the
+# SPA hammers the server. The global stream here turns that into a single
+# SSE connection:
+#
+#   - on connect: emit ``event: snapshot`` with the current active job
+#     (or ``null``), so the banner can render its initial state without
+#     a separate GET.
+#   - poll ``svc.active()`` every 0.5 s (same cadence the per-job stream
+#     uses) and emit ``event: job_update`` whenever either the active
+#     job *identity* or its *progress* changes. The progress payload is
+#     a full ``ScanJob`` snapshot — the banner only needs the progress
+#     counters + state, but carrying the full record keeps the schema
+#     identical to ``ScanJobSchema`` on the wire.
+#   - 15 s heartbeat ``event: ping`` so proxy idle-timers (uvicorn
+#     behind nginx / corporate proxies) don't drop the connection.
+#
+# We do NOT emit per-job ``new_photo`` / ``new_person`` / ``merged`` here
+# — those are still served by ``/jobs/{id}/events`` and consumed by
+# ``usePersonsLiveInvalidator``. Keeping the per-job stream for the
+# fine-grained cluster events avoids bloating the global stream with
+# thousands of incremental records during a long scan.
+# -----------------------------------------------------------------------------
+
+
+def _active_snapshot(svc: ScanService) -> tuple[str, str | None, str | None]:
+    """Return a content fingerprint of the active job for change detection.
+
+    Returns ``(job_id, state, progress_repr)`` where ``progress_repr`` is
+    a stable string form of the progress counters (the SSE loop only
+    needs to know "did anything change?"). A ``None`` active job is
+    encoded as ``("", "", None)``.
+    """
+    job = svc.active()
+    if job is None:
+        return ("", "", None)
+    progress = job.progress
+    return (
+        job.id,
+        job.state.value,
+        f"{progress.processed}/{progress.total}/{progress.faces}/{progress.errors}",
+    )
+
+
+@router.get("/events")
+async def global_events(
+    request: Request,
+    svc: ScanService = Depends(get_scan_service),
+) -> Any:
+    """Server-Sent Events stream of the currently active scan job.
+
+    Emits:
+
+    - ``event: snapshot``   — current active job (or ``null``) on connect.
+    - ``event: job_update`` — active job changed (state, progress, or a
+                              different job became active). Payload is the
+                              full ``ScanJob`` JSON, identical to the
+                              shape returned by ``GET /jobs/{id}``.
+    - ``event: ping``       — heartbeat every 15 s so intermediate proxies
+                              do not drop the connection.
+
+    On client disconnect the generator returns and the stream closes.
+    """
+    import asyncio
+    import json
+
+    from fastapi.responses import StreamingResponse
+
+    async def gen():
+        last_id, last_state, last_progress = _active_snapshot(svc)
+        current = svc.active()
+        yield (
+            "event: snapshot\ndata: "
+            + json.dumps(_serialize(current) if current is not None else None)
+            + "\n\n"
+        )
+
+        ticks_since_ping = 0
+        while True:
+            await asyncio.sleep(0.5)
+            ticks_since_ping += 1
+
+            current = svc.active()
+            cur_id, cur_state, cur_progress = _active_snapshot(svc)
+
+            if cur_id != last_id or cur_state != last_state or cur_progress != last_progress:
+                payload = json.dumps(_serialize(current) if current is not None else None)
+                yield f"event: job_update\ndata: {payload}\n\n"
+                last_id, last_state, last_progress = cur_id, cur_state, cur_progress
+
+            if ticks_since_ping >= 30:  # 30 × 0.5 s = 15 s
+                yield "event: ping\ndata: {}\n\n"
+                ticks_since_ping = 0
+
+            if await request.is_disconnected():
+                return
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

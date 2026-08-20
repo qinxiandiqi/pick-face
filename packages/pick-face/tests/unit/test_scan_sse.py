@@ -252,3 +252,116 @@ def test_sse_closes_on_end(tmp_pure: Path) -> None:
     progress_frames = [f for f in frames if f["event"] == "progress"]
     assert end_frames, frames
     assert progress_frames, frames
+
+
+# ---------------------------------------------------------------------------
+# Global SSE stream  — `/api/scan/events`
+# ---------------------------------------------------------------------------
+
+
+def test_global_events_emits_snapshot_then_updates(tmp_pure: Path) -> None:
+    """Push-based replacement for polling ``/api/scan/jobs/active``.
+
+    The generator should emit a ``snapshot`` on connect, then a
+    ``job_update`` whenever the active job's progress or state
+    changes. We drive the loop manually with a tiny ``_Tick`` shim
+    that counts down without sleeping — the generator's ``asyncio.sleep``
+    is replaced so the test finishes in O(milliseconds).
+    """
+    import asyncio
+    from pick_face.api import scan as scan_api
+    from pick_face.service.scan_service import ScanProgress, ScanService, ScanState
+
+    layout = _layout(tmp_pure)
+    svc = ScanService(layout)
+    job = svc.start(paths=[tmp_pure / "photos"], kind="full")
+    svc.update_state(job.id, ScanState.RUNNING)
+    svc.update_progress(job.id, ScanProgress(processed=0, total=10, faces=0, errors=0))
+
+    chunks: list[bytes] = []
+
+    class _FakeRequest:
+        def __init__(self) -> None:
+            self._disconnected = False
+
+        async def is_disconnected(self) -> bool:
+            return self._disconnected
+
+    real_sleep = asyncio.sleep
+
+    async def fast_sleep(_seconds: float) -> None:
+        # Step the generator 5 times quickly so it sees the change.
+        await real_sleep(0)  # yield to loop, no real delay
+
+    async def go() -> None:
+        req = _FakeRequest()
+        gen = scan_api.global_events(request=req, svc=svc)
+        resp = await gen  # StreamingResponse
+        # Drain up to ~10 ticks (≈ 0.5 s simulated) or until we see the
+        # expected ``job_update`` with the bumped counter.
+        last_progress = None
+        for _ in range(20):
+            chunk_iter = resp.body_iterator
+            try:
+                chunk = await anext(chunk_iter)  # type: ignore[arg-type]
+            except StopAsyncIteration:
+                break
+            chunks.append(chunk if isinstance(chunk, bytes) else chunk.encode())
+            # Mutate progress mid-stream — the generator should pick it up.
+            if last_progress is None:
+                last_progress = ScanProgress(processed=5, total=10, faces=3, errors=0)
+                svc.update_progress(job.id, last_progress)
+            await real_sleep(0)
+            if b"event: job_update" in chunks[-1]:
+                # We've captured the change — bail before ping spam.
+                req._disconnected = True
+                break
+        req._disconnected = True
+
+    asyncio.run(go())
+
+    frames = _consume_sse_frames(chunks)
+    snapshot_frames = [f for f in frames if f["event"] == "snapshot"]
+    update_frames = [f for f in frames if f["event"] == "job_update"]
+
+    assert snapshot_frames, frames
+    assert update_frames, frames
+    # The first snapshot is the original (processed=0, total=10). Note
+    # the wire format uses lowercase state strings (matches ScanState
+    # enum values); the frontend zod schema mirrors this exact casing.
+    snap = snapshot_frames[0]["data"]
+    assert snap is not None and snap["state"] == "running"
+    assert snap["progress"]["processed"] == 0
+    # The job_update reflects the bumped counters.
+    upd = update_frames[0]["data"]
+    assert upd is not None and upd["progress"]["processed"] == 5
+    assert upd["progress"]["faces"] == 3
+
+
+def test_global_events_snapshot_null_when_no_active_job(tmp_pure: Path) -> None:
+    """If nothing is running, the initial snapshot is ``null``."""
+    import asyncio
+    from pick_face.api import scan as scan_api
+    from pick_face.service.scan_service import ScanService
+
+    layout = _layout(tmp_pure)
+    svc = ScanService(layout)
+
+    chunks: list[bytes] = []
+
+    class _FakeRequest:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    async def go() -> None:
+        gen = scan_api.global_events(request=_FakeRequest(), svc=svc)
+        resp = await gen
+        # Drain just the first chunk (the snapshot) — generator then loops.
+        chunk = await anext(resp.body_iterator)  # type: ignore[arg-type]
+        chunks.append(chunk if isinstance(chunk, bytes) else chunk.encode())
+
+    asyncio.run(go())
+    frames = _consume_sse_frames(chunks)
+    snapshots = [f for f in frames if f["event"] == "snapshot"]
+    assert len(snapshots) == 1
+    assert snapshots[0]["data"] is None

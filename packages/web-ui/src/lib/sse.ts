@@ -1,18 +1,24 @@
-// Typed EventSource wrapper for `/api/scan/jobs/{id}/events`.
+// Typed EventSource wrapper.
 //
-// Events emitted by the backend (see `src/pick_face/api/scan.py`):
-//   - "progress"   → ScanProgressEvent payload (existing)
-//   - "new_photo"  → ScanNewPhotoEvent payload (M8-T-8)
-//   - "new_person" → ScanNewPersonEvent payload (M8-T-8)
-//   - "merged"     → ScanMergedEvent payload (M8-T-8)
-//   - "closed"     → upstream disconnected; client may close + retry
-//   - "end"        → terminal state reached; stream closes
+// Two streams are exposed:
+//
+//   1. Per-job stream  — `/api/scan/jobs/{id}/events` (existing, M8-T-8).
+//      Emits per-image ``new_photo`` / per-cluster ``new_person`` /
+//      per-merge ``merged`` events; consumed by ``usePersonsLiveInvalidator``.
+//      Also emits per-tick ``progress`` for the legacy per-job banner.
+//
+//   2. Global stream   — `/api/scan/events` (new). Emits ``snapshot`` on
+//      connect and ``job_update`` whenever the *active* job's identity,
+//      state, or progress changes. Consumed by the SPA
+//      ``ScanProgressBanner`` as a polling replacement.
 //
 // Browser EventSource cannot send custom headers and has no POST support;
-// we use it as-is since the scan-events endpoint is GET-only.
+// we use it as-is since both scan-events endpoints are GET-only.
 
 import { z } from "zod";
 import {
+  ScanJob,
+  ScanJobSchema,
   ScanMergedEventSchema,
   ScanNewPersonEventSchema,
   ScanNewPhotoEventSchema,
@@ -72,6 +78,49 @@ export function openScanEventStream(
     handlers.onEnd?.();
     es.close();
   });
+
+  es.addEventListener("error", (ev) => {
+    handlers.onError?.(ev);
+  });
+
+  return es;
+}
+
+// ============================================================================
+// Global scan-events stream  — `/api/scan/events`
+// ============================================================================
+//
+// Pushes the *active* scan job to subscribed browsers, replacing the
+// 2-second TanStack Query refetchInterval the banner used to drive.
+// The server emits a full ``ScanJob`` payload on every state / progress
+// change; we expose it via ``onSnapshot`` (initial state) and
+// ``onJobUpdate`` (subsequent changes). The browser-side EventSource
+// auto-reconnects on transient errors so a stale ``null`` snapshot
+// followed by a fresh ``job_update`` is enough to recover from a
+// dropped backend connection.
+
+export interface GlobalScanEventStreamHandlers {
+  /** Initial active job (or null). Fired once on connect. */
+  onSnapshot: (job: ScanJob | null) => void;
+  /** Active job changed (state, progress, or a new job took over). */
+  onJobUpdate?: (job: ScanJob | null) => void;
+  /** Heartbeat — purely informational; default handler is a no-op. */
+  onPing?: () => void;
+  /** Network error — the browser will auto-reconnect, but you can surface UI. */
+  onError?: (err: Event) => void;
+}
+
+export function openGlobalScanEventStream(
+  handlers: GlobalScanEventStreamHandlers,
+): EventSource {
+  const es = new EventSource(`/api/scan/events`, { withCredentials: false });
+
+  bindPayload(es, "snapshot", ScanJobSchema.nullable(), handlers.onSnapshot);
+  bindPayload(es, "job_update", ScanJobSchema.nullable(), handlers.onJobUpdate);
+
+  if (handlers.onPing) {
+    es.addEventListener("ping", () => handlers.onPing?.());
+  }
 
   es.addEventListener("error", (ev) => {
     handlers.onError?.(ev);
