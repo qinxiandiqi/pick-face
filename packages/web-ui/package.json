@@ -1,9 +1,9 @@
 {
-  "name": "pick-face-web",
-  "version": "3.0.0",
+  "name": "@pick-face/web-ui",
+  "version": "4.0.0",
   "private": true,
   "type": "module",
-  "description": "pick-face v3.0 Web service SPA — React + Vite + shadcn/ui",
+  "description": "pick-face v4.0 monorepo SPA — React + Vite + shadcn/ui",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

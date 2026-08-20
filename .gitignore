@@ -256,7 +256,7 @@ docker-compose.override.yaml
 *.dockerfile.bak
 
 # ============================================================
-# 13. Node / 前端 (M7 — Vite + React + TypeScript SPA)
+# 13. Node / 前端 (v4 monorepo — SPA at packages/web-ui/)
 # ============================================================
 node_modules/
 npm-debug.log*
@@ -268,26 +268,27 @@ pnpm-debug.log*
 .nuxt/
 .vite/
 
-# M7 — SPA source lives at src/pick_face/web/app/. We commit pnpm-lock.yaml
-# (for reproducible CI installs) but not local build cache / store / tsc emit.
-src/pick_face/web/app/.vite/
-src/pick_face/web/app/dist/
-src/pick_face/web/app/*.tsbuildinfo
-src/pick_face/web/app/src/*.tsbuildinfo
-src/pick_face/web/app/vite.config.d.ts
-src/pick_face/web/app/vite.config.js
+# v4 monorepo: SPA lives at packages/web-ui/ (was src/pick_face/web/app/).
+# We commit pnpm-lock.yaml for reproducible CI installs but not local
+# build cache / store / tsc emit.
+packages/web-ui/.vite/
+packages/web-ui/dist/
+packages/web-ui/*.tsbuildinfo
+packages/web-ui/src/*.tsbuildinfo
+packages/web-ui/vite.config.d.ts
+packages/web-ui/vite.config.js
 .pnpm-store/
 playwright-report/
 test-results/
 playwright/.cache/
 
-# M7 — vite build output. The CI `frontend-build` job runs `pnpm build`
-# before `uv build`, so the wheel always carries the freshest bundle.
-# We never commit built artifacts; this also keeps the source-only sdist
-# (see pyproject.toml [tool.hatch.build.targets.sdist] exclude) honest.
+# v4 monorepo: vite build output is written to packages/pick-face/src/pick_face/web/static/.
+# The wheel always carries the freshest bundle (CI builds frontend first, then `uv build`).
+# Never commit built artifacts; this also keeps the source-only sdist
+# (see packages/pick-face/pyproject.toml [tool.hatch.build.targets.sdist] exclude) honest.
 # M7.9 — PWA emits sw.js / registerSW.js / manifest.webmanifest / icons/
 # alongside the JS bundle; the directory-wide rule covers everything.
-src/pick_face/web/static/
+packages/pick-face/src/pick_face/web/static/
 
 # ============================================================
 # 14. 大文件 / 二进制
@@ -316,9 +317,9 @@ uv-cache/
 # ============================================================
 # 16. 真实人脸测试 fixture (T-307)
 # ============================================================
-# scripts/fetch_face_dataset.py 把数据集拉到 tests/fixtures/real_faces/，
+# scripts/fetch_face_dataset.py 把数据集拉到 packages/pick-face/tests/fixtures/real_faces/，
 # 不进仓（用户按需 fetch）。
-tests/fixtures/real_faces/
+packages/pick-face/tests/fixtures/real_faces/
 
 # ============================================================
 # 17. 用户运行时配置 (T-003)

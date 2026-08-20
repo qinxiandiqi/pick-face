@@ -85,7 +85,7 @@ export default defineConfig({
   ],
   base: "/",
   build: {
-    outDir: path.resolve(__dirname, "../static"),
+    outDir: path.resolve(__dirname, "../pick-face/src/pick_face/web/static"),
     emptyOutDir: true,
     sourcemap: false,
     target: "es2022",
