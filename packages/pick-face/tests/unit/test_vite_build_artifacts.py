@@ -42,9 +42,9 @@ def _vite_has_built() -> bool:
 @pytest.mark.skipif(
     not _vite_has_built(),
     reason=(
-        "vite build has not been run — `src/pick_face/web/static/index.html` "
+        "vite build has not been run — `packages/pick-face/src/pick_face/web/static/index.html` "
         "is missing. To produce it locally: "
-        "`cd src/pick_face/web/app && pnpm install && pnpm build`. "
+        "`cd packages/web-ui && pnpm install && pnpm build`. "
         "CI runs the build via the `frontend-build` job before `unit`."
     ),
 )
@@ -52,7 +52,7 @@ def test_vite_emitted_index_html() -> None:
     """The SPA entry point must exist after `pnpm build`."""
     assert INDEX_HTML.is_file(), (
         f"expected vite output at {INDEX_HTML}; "
-        "did `pnpm --dir src/pick_face/web/app build` succeed?"
+        "did `pnpm --dir packages/web-ui build` succeed?"
     )
     # Sanity: it really is an HTML document
     head = INDEX_HTML.read_text(encoding="utf-8", errors="replace")[:200].lower()
@@ -73,7 +73,7 @@ def test_vite_emitted_assets_subdir() -> None:
     """
     assert ASSETS_DIR.is_dir(), (
         f"expected vite to emit an assets/ subdir under {STATIC_DIR}; "
-        "check `build.outDir` in src/pick_face/web/app/vite.config.ts."
+        "check `build.outDir` in packages/web-ui/vite.config.ts."
     )
     js_files = list(ASSETS_DIR.glob("*.js"))
     css_files = list(ASSETS_DIR.glob("*.css"))

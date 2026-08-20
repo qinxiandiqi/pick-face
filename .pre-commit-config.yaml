@@ -22,7 +22,7 @@ repos:
     hooks:
       - id: pytest-fast
         name: pytest (fast)
-        entry: uv run pytest -q -x --ignore=tests/acceptance
+        entry: bash -c 'cd packages/pick-face && uv run pytest -q -x --ignore=tests/acceptance'
         language: system
         types: [python]
         pass_filenames: false

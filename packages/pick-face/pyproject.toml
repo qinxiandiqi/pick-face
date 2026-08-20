@@ -113,7 +113,7 @@ pick-face = "pick_face.cli:main"
 pick-face-web = "pick_face.web_cli:main"
 
 [project.urls]
-Documentation = "https://github.com/qinxiandiqi/pick-face/blob/main/docs/AGENTS.md"
+Documentation = "https://github.com/qinxiandiqi/pick-face/blob/main/packages/pick-face/docs/AGENTS.md"
 Source = "https://github.com/qinxiandiqi/pick-face"
 Issues = "https://github.com/qinxiandiqi/pick-face/issues"
 

@@ -3,17 +3,19 @@
 * ``web_cli``      — ``pick-face-web {init,serve,migrate}`` CLI
                       (see :mod:`pick_face.web_cli`).
 * ``static/``      — SPA build output (gitignored; rebuilt by CI via
-                      ``pnpm --dir src/pick_face/web/app build``).
-                      FastAPI mounts it at ``/`` — see
+                      ``cd packages/web-ui && pnpm build``). FastAPI
+                      mounts it at ``/`` — see
                       :mod:`pick_face.api.app`. Hatchling wheel
                       packaging picks the directory up automatically
                       as package data.
-* ``app/``         — Vite + React + TypeScript + Tailwind + shadcn/ui
-                      SPA source tree. Excluded from sdist
-                      (``pyproject.toml`` ``[tool.hatch.build.targets.sdist]``)
-                      so PyPI consumers don't need Node; the wheel
-                      ships the pre-built ``static/`` bundle instead.
-                      See ``README.md`` §Development for ``pnpm`` workflow.
+* SPA source      — Vite + React + TypeScript + Tailwind + shadcn/ui
+                      tree lives at the monorepo root in
+                      ``packages/web-ui/``. The wheel ships the
+                      pre-built ``static/`` bundle; the SPA source
+                      itself is excluded from sdist (see
+                      ``pyproject.toml`` ``[tool.hatch.build.targets.sdist]``).
+                      See the root ``README.md`` §Quick start for the
+                      ``pnpm`` workflow.
 """
 
 from __future__ import annotations

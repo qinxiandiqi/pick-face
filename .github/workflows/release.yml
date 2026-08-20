@@ -47,6 +47,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync (no extras — verify base install)
+        working-directory: packages/pick-face
         run: uv sync --frozen
 
       # M7 — build the SPA into web/static/ before uv build so the wheel ships the bundle.
@@ -58,28 +59,30 @@ jobs:
         with:
           node-version: "24"
           cache: "pnpm"
-          cache-dependency-path: src/pick_face/web/app/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
-      - working-directory: src/pick_face/web/app
+      - working-directory: packages/web-ui
         run: pnpm install --frozen-lockfile
 
-      - working-directory: src/pick_face/web/app
+      - working-directory: packages/web-ui
         run: pnpm build
 
       - name: Verify vite emitted PWA + shell artifacts (M7.9)
         run: |
-          test -f src/pick_face/web/static/index.html
-          test -f src/pick_face/web/static/manifest.webmanifest
-          test -f src/pick_face/web/static/sw.js
-          test -f src/pick_face/web/static/registerSW.js
-          test -f src/pick_face/web/static/icons/icon-192.png
-          test -f src/pick_face/web/static/icons/icon-512.png
-          test -f src/pick_face/web/static/icons/icon-mask.png
+          test -f packages/pick-face/src/pick_face/web/static/index.html
+          test -f packages/pick-face/src/pick_face/web/static/manifest.webmanifest
+          test -f packages/pick-face/src/pick_face/web/static/sw.js
+          test -f packages/pick-face/src/pick_face/web/static/registerSW.js
+          test -f packages/pick-face/src/pick_face/web/static/icons/icon-192.png
+          test -f packages/pick-face/src/pick_face/web/static/icons/icon-512.png
+          test -f packages/pick-face/src/pick_face/web/static/icons/icon-mask.png
 
       - name: Build sdist + wheel
+        working-directory: packages/pick-face
         run: uv build
 
       - name: 'AC-9: no *.onnx in artifacts'
+        working-directory: packages/pick-face
         run: |
           .venv/Scripts/python -c "
           import zipfile, tarfile, sys, pathlib
@@ -124,7 +127,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}
-          path: dist/
+          path: packages/pick-face/dist/
 
   publish:
     name: Publish to PyPI
@@ -139,7 +142,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: dist-ubuntu-latest
-          path: dist/
+          path: packages/pick-face/dist/
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -150,4 +153,5 @@ jobs:
         run: uv python install 3.12
 
       - name: Publish via Trusted Publishing
+        working-directory: packages/pick-face
         run: uv publish dist/* --trusted-publishing always
