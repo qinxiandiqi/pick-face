@@ -4,11 +4,17 @@
   "private": true,
   "description": "pick-face monorepo — Python service + TypeScript SPA",
   "scripts": {
+    "dev": "concurrently -n web,api -c blue,green \"pnpm dev:web\" \"pnpm dev:api\"",
+    "dev:web": "pnpm --filter @pick-face/web-ui dev",
+    "dev:api": "cd packages/pick-face && uv run pick-face-web serve --reload --port 8000 --host 127.0.0.1",
     "build": "pnpm --filter @pick-face/web-ui build",
     "build:web": "pnpm --filter @pick-face/web-ui build",
     "test": "pnpm --filter @pick-face/web-ui test",
     "test:web": "pnpm --filter @pick-face/web-ui test",
     "lint": "pnpm -r lint"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
   },
   "packageManager": "pnpm@10.0.0",
   "engines": {

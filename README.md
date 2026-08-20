@@ -5,14 +5,30 @@ the Python service and [`packages/web-ui/`](packages/web-ui/) for the SPA.
 
 ## Quick start
 
+### One-shot dev server (recommended)
+
+From the repo root, run `pnpm dev` — it boots the FastAPI service
+(with `--reload`) and the Vite dev server (with HMR) in parallel,
+prefixed with `web` / `api` log tags:
+
 ```bash
-# Python service + CLI (pick-face, pick-face-web)
+pnpm install                            # one-time: install concurrently + web-ui deps
+pnpm dev                                # → http://localhost:5173 (Vite dev with proxy → :8000)
+```
+
+The Vite dev server proxies `/api/*` to `localhost:8000`, so the SPA
+hot-reloads on source changes while the backend auto-reloads on Python
+file changes. Press Ctrl-C once to stop both.
+
+### Manual / split (only if `pnpm dev` is unavailable)
+
+```bash
+# Terminal A — backend
 cd packages/pick-face
 uv sync
 uv run pick-face-web serve --port 8000
 
-# Frontend SPA (Vite dev server, optional — pick-face-web already serves the
-# built bundle)
+# Terminal B — frontend (Vite dev server, optional)
 cd packages/web-ui
 pnpm install
 pnpm dev
