@@ -31,17 +31,21 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync dev dependencies
+        working-directory: packages/pick-face
         run: uv sync --extra dev --frozen
 
       - name: ruff check
+        working-directory: packages/pick-face
         run: uv run ruff check src tests
 
       - name: ruff format --check
+        working-directory: packages/pick-face
         run: uv run ruff format --check src tests
 
   # ---------------------------------------------------------------------------
-  # 1b. Frontend — Vite build → `src/pick_face/web/static/` so the wheel
-  #     built later contains the SPA bundle. Pnpm cache keyed on lockfile.
+  # 1b. Frontend — Vite build → `packages/pick-face/src/pick_face/web/static/`
+  #     so the wheel built later contains the SPA bundle. Pnpm cache keyed
+  #     on the workspace lockfile at the monorepo root.
   # ---------------------------------------------------------------------------
   frontend-build:
     name: Frontend (vite build)
@@ -58,32 +62,32 @@ jobs:
         with:
           node-version: "24"
           cache: "pnpm"
-          cache-dependency-path: src/pick_face/web/app/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
-      - working-directory: src/pick_face/web/app
+      - working-directory: packages/web-ui
         run: pnpm install --frozen-lockfile
 
-      - working-directory: src/pick_face/web/app
+      - working-directory: packages/web-ui
         run: pnpm build
 
       - name: Verify vite emitted PWA + shell artifacts (M7.9)
         run: |
-          test -f src/pick_face/web/static/index.html
-          test -f src/pick_face/web/static/manifest.webmanifest
-          test -f src/pick_face/web/static/sw.js
-          test -f src/pick_face/web/static/registerSW.js
-          test -f src/pick_face/web/static/icons/icon-192.png
-          test -f src/pick_face/web/static/icons/icon-512.png
-          test -f src/pick_face/web/static/icons/icon-mask.png
+          test -f packages/pick-face/src/pick_face/web/static/index.html
+          test -f packages/pick-face/src/pick_face/web/static/manifest.webmanifest
+          test -f packages/pick-face/src/pick_face/web/static/sw.js
+          test -f packages/pick-face/src/pick_face/web/static/registerSW.js
+          test -f packages/pick-face/src/pick_face/web/static/icons/icon-192.png
+          test -f packages/pick-face/src/pick_face/web/static/icons/icon-512.png
+          test -f packages/pick-face/src/pick_face/web/static/icons/icon-mask.png
 
       - name: AC-9 frontend guard (no *.onnx refs in SPA source)
         run: |
-          ! find src/pick_face/web/app/src -iname '*.onnx' -print -quit | grep -q .
+          ! find packages/web-ui/src -iname '*.onnx' -print -quit | grep -q .
 
       - uses: actions/upload-artifact@v4
         with:
           name: web-static
-          path: src/pick_face/web/static
+          path: packages/pick-face/src/pick_face/web/static
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -107,12 +111,12 @@ jobs:
         with:
           node-version: "24"
           cache: "pnpm"
-          cache-dependency-path: src/pick_face/web/app/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
-      - working-directory: src/pick_face/web/app
+      - working-directory: packages/web-ui
         run: pnpm install --frozen-lockfile
 
-      - working-directory: src/pick_face/web/app
+      - working-directory: packages/web-ui
         run: pnpm test
 
   # ---------------------------------------------------------------------------
@@ -135,9 +139,11 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync dev dependencies
+        working-directory: packages/pick-face
         run: uv sync --extra dev --frozen
 
       - name: Run unit tests with coverage
+        working-directory: packages/pick-face
         run: |
           uv run pytest tests/unit tests/acceptance \
             --cov=pick_face --cov-report=xml --cov-report=term -q
@@ -146,7 +152,7 @@ jobs:
         if: always()
         uses: codecov/codecov-action@v4
         with:
-          files: coverage.xml
+          files: packages/pick-face/coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
@@ -170,21 +176,27 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync project
+        working-directory: packages/pick-face
         run: uv sync --frozen
 
       - name: 'Smoke: init-models refusal path'
+        working-directory: packages/pick-face
         run: python tests/smoke_cli_init_models.py
 
       - name: 'Smoke: scan'
+        working-directory: packages/pick-face
         run: python tests/smoke_cli_scan.py
 
       - name: 'Smoke: index'
+        working-directory: packages/pick-face
         run: python tests/smoke_cli_index.py
 
       - name: 'Smoke: link'
+        working-directory: packages/pick-face
         run: python tests/smoke_cli_link.py
 
       - name: 'Smoke: report'
+        working-directory: packages/pick-face
         run: python tests/smoke_cli_report.py
 
   smoke-windows:
@@ -204,25 +216,31 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync project
+        working-directory: packages/pick-face
         run: uv sync --frozen
 
       - name: 'Smoke: init-models refusal path'
+        working-directory: packages/pick-face
         shell: bash
         run: python tests/smoke_cli_init_models.py
 
       - name: 'Smoke: scan'
+        working-directory: packages/pick-face
         shell: bash
         run: python tests/smoke_cli_scan.py
 
       - name: 'Smoke: index'
+        working-directory: packages/pick-face
         shell: bash
         run: python tests/smoke_cli_index.py
 
       - name: 'Smoke: link'
+        working-directory: packages/pick-face
         shell: bash
         run: python tests/smoke_cli_link.py
 
       - name: 'Smoke: report'
+        working-directory: packages/pick-face
         shell: bash
         run: python tests/smoke_cli_report.py
 
@@ -243,21 +261,27 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync project
+        working-directory: packages/pick-face
         run: uv sync --frozen
 
       - name: 'Smoke: init-models refusal path'
+        working-directory: packages/pick-face
         run: python tests/smoke_cli_init_models.py
 
       - name: 'Smoke: scan'
+        working-directory: packages/pick-face
         run: python tests/smoke_cli_scan.py
 
       - name: 'Smoke: index'
+        working-directory: packages/pick-face
         run: python tests/smoke_cli_index.py
 
       - name: 'Smoke: link'
+        working-directory: packages/pick-face
         run: python tests/smoke_cli_link.py
 
       - name: 'Smoke: report'
+        working-directory: packages/pick-face
         run: python tests/smoke_cli_report.py
 
   # ---------------------------------------------------------------------------
@@ -280,9 +304,11 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync dev dependencies
+        working-directory: packages/pick-face
         run: uv sync --extra dev --frozen
 
       - name: Run benchmark (small workload for CI)
+        working-directory: packages/pick-face
         run: |
           mkdir -p .benchmarks/ci
           uv run python -m pick_face.bench --n-embeddings 2000 --k-people 10 --dim 128 --seed 0 \
@@ -297,7 +323,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: perf-report
-          path: .benchmarks/ci/
+          path: packages/pick-face/.benchmarks/ci/
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -319,9 +345,11 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync with [docs] extra
+        working-directory: packages/pick-face
         run: uv sync --extra docs --frozen
 
       - name: Build docs site (strict — fails on warnings)
+        working-directory: packages/pick-face
         run: uv run mkdocs build --strict
 
       - name: Upload site artifact
@@ -329,7 +357,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mkdocs-site
-          path: site/
+          path: packages/pick-face/site/
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -353,15 +381,17 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync project
+        working-directory: packages/pick-face
         run: uv sync --frozen
 
       - name: AC-9 guard
+        working-directory: packages/pick-face
         run: |
           uv run python -m pytest tests/acceptance/test_no_model_in_distribution.py -v
 
       - name: Verify no Dockerfile bakes ONNX
         run: |
-          if find . -name 'Dockerfile*' -not -path './.venv/*' -not -path './.git/*' -print -quit | grep -q .; then
+          if find . -name 'Dockerfile*' -not -path './.venv/*' -not -path './.git/*' -not -path './node_modules/*' -not -path '*/node_modules/*' -print -quit | grep -q .; then
             ! grep -rilE '\.onnx(\b|[^a-z])' --include='Dockerfile*' . || \
               (echo "AC-9 violation: Dockerfile references .onnx" && exit 1)
           fi

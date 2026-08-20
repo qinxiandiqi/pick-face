@@ -9,6 +9,41 @@ the full policy.
 
 ---
 
+## [4.0.0] - 2026-08-20 — **Monorepo organization**
+
+Restructured the project into a pnpm workspace without changing any
+functionality, APIs, or commands.
+
+### Changed
+
+- **Monorepo layout**: project is now a pnpm workspace with two packages:
+  - `packages/pick-face/` — Python wheel (`pick-face` + `pick-face-web`).
+    `src/`, `tests/`, `pyproject.toml`, `uv.lock`, `scripts/`, `docs/`,
+    `LICENSE`, `README.md`, `CHANGELOG.md`, `mkdocs.yml` all live here.
+  - `packages/web-ui/` — React + Vite SPA (`@pick-face/web-ui`). Previously
+    embedded at `src/pick_face/web/app/`; now an independent workspace member.
+  - Root: `pnpm-workspace.yaml`, root `package.json`, root `pnpm-lock.yaml`
+    (workspace lockfile), `.gitignore` updated to monorepo paths.
+- **Vite build target**: `packages/web-ui/` builds to
+  `packages/pick-face/src/pick_face/web/static/` so the wheel still ships
+  the SPA bundle (`uv build` unchanged).
+- **CI**: `working-directory` set to `packages/pick-face/` or
+  `packages/web-ui/` per job; cache dependency path is the root
+  `pnpm-lock.yaml`.
+
+### Migration notes
+
+- Existing `data/` directory (`pick-face.db` + `index.hnsw`) is unchanged.
+- Existing `~/.pick-face/config.toml` is unchanged.
+- Development commands now require `cd packages/pick-face` or
+  `cd packages/web-ui` before `uv run …` / `pnpm …`.
+- `pick-face` and `pick-face-web` console scripts work unchanged
+  (wheel entry points preserved).
+- All 438 backend tests + 70 frontend tests pass without modification
+  beyond path depth adjustments in 6 test files.
+
+---
+
 ## [3.0.0] - 2026-08-12 — **Product pivot**: Web gallery service
 
 **Major product pivot.** pick-face transitions from a CLI tool
